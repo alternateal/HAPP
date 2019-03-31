@@ -8,14 +8,19 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
-import android.os.Handler;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
 import android.util.Log;
 
 import com.hypodiabetic.happ.Constants;
+import com.hypodiabetic.happ.Intents;
 import com.hypodiabetic.happ.MainApp;
 import com.hypodiabetic.happ.Notifications;
+import com.hypodiabetic.happ.Objects.RealmManager;
+import com.hypodiabetic.happ.integration.nsclient.NSClientIncoming;
+import com.hypodiabetic.happ.integration.xDrip.xDripIncoming;
+
+import io.realm.Realm;
 
 /**
  * Created by Tim on 06/03/2016.
@@ -25,6 +30,8 @@ public class BackgroundService extends Service{
     SharedPreferences mPrefs;
     SharedPreferences.OnSharedPreferenceChangeListener mPrefListener;
     BroadcastReceiver mNotifyReceiver;
+    BroadcastReceiver mCGMReceiver;
+    private RealmManager realmManager;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -37,9 +44,11 @@ public class BackgroundService extends Service{
     public void onCreate() {
         super.onCreate();
         mPrefs = PreferenceManager.getDefaultSharedPreferences(this);
+        realmManager = new RealmManager();
 
         setHouseKeepingAlarm();
         setAPSAlarm(Integer.parseInt(mPrefs.getString("aps_loop", "900000")));
+        setCGMListener(mPrefs.getString("cgm_source", ""));
         setNotifyReceiver();
         setSharedPrefListener();
 
@@ -48,9 +57,11 @@ public class BackgroundService extends Service{
 
     @Override
     public void onDestroy() {
-        super.onDestroy();
         if (mPrefs != null && mPrefListener != null)    mPrefs.unregisterOnSharedPreferenceChangeListener(mPrefListener);
         if (mNotifyReceiver != null)                    unregisterReceiver(mNotifyReceiver);
+        if (mCGMReceiver != null)                       unregisterReceiver(mCGMReceiver);
+        realmManager.closeRealm();
+        super.onDestroy();
     }
 
     @Override
@@ -69,11 +80,41 @@ public class BackgroundService extends Service{
                             case "summary_notification":
                                 setNotifyReceiver();
                                 break;
+                            case "cgm_source":
+                                setCGMListener(mPrefs.getString("cgm_source", ""));
+                                break;
                         }
                         Log.d(TAG, "Prefs Change: " + key);
                     }
                 };
         mPrefs.registerOnSharedPreferenceChangeListener(mPrefListener);
+    }
+
+    public void setCGMListener(String cgm_source){
+        switch (cgm_source){
+            case "xdrip":
+                mCGMReceiver = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        xDripIncoming.New_data(intent, realmManager.getRealm());
+                    }
+                };
+                MainApp.instance().registerReceiver(mCGMReceiver, new IntentFilter(Intents.XDRIP_BGESTIMATE));
+                Log.i(TAG, "setCGMListener: xDrip Set");
+                break;
+            case "nsclient":
+                mCGMReceiver = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        NSClientIncoming.New_sgv(intent, realmManager.getRealm());
+                    }
+                };
+                MainApp.instance().registerReceiver(mCGMReceiver, new IntentFilter(Intents.NSCLIENT_ACTION_NEW_SGV));
+                Log.i(TAG, "setCGMListener: NSClient Set");
+                break;
+            default:
+                Log.e(TAG, "Unknown CGM Source!: " + cgm_source);
+        }
     }
 
     public void setHouseKeepingAlarm(){
@@ -93,7 +134,7 @@ public class BackgroundService extends Service{
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     if (intent.getAction().compareTo(Intent.ACTION_TIME_TICK) == 0) {
-                        Notifications.updateCard();
+                        Notifications.updateCard(realmManager.getRealm());
                     }
                 }
             };

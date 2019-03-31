@@ -5,8 +5,10 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.res.Resources;
 import android.os.Environment;
 import android.preference.PreferenceManager;
 import android.text.ClipboardManager;
@@ -15,16 +17,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.crashlytics.android.Crashlytics;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.reflect.TypeToken;
 import com.hypodiabetic.happ.Objects.APSResult;
 import com.hypodiabetic.happ.Objects.Bg;
 import com.hypodiabetic.happ.Objects.Profile;
 import com.hypodiabetic.happ.Objects.Pump;
 import com.hypodiabetic.happ.Objects.Safety;
-import com.hypodiabetic.happ.Objects.Stats;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import com.hypodiabetic.happ.Objects.Stat;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -35,13 +36,19 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.text.NumberFormat;
 import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+
+import io.realm.Realm;
+
 
 /**
  * Created by Tim on 15/09/2015.
@@ -81,24 +88,32 @@ public class tools {
     }
 
     public static Double round(Double value, int decPoints){
+        if (value == null || value.isInfinite() || value.isNaN()) return 0D;
         DecimalFormat df;
+        DecimalFormatSymbols otherSymbols = new DecimalFormatSymbols(Locale.ENGLISH);
+        otherSymbols.setDecimalSeparator('.');
+        otherSymbols.setGroupingSeparator(',');
 
         switch (decPoints){
             case 1:
-                if (precisionRounding()){
-                    df = new DecimalFormat("##0.00");
+                if (!precisionRounding()){
+                    df = new DecimalFormat("##0.0", otherSymbols);
                 } else {
-                    df = new DecimalFormat("##0.0");
+                    df = new DecimalFormat("##0.00", otherSymbols);
                 }
                 break;
             case 2:
-                df = new DecimalFormat("##0.00");
+                if (!precisionRounding()) {
+                    df = new DecimalFormat("##0.00", otherSymbols);
+                } else {
+                    df = new DecimalFormat("##0.000", otherSymbols);
+                }
                 break;
             case 3:
-                df = new DecimalFormat("##0.000");
+                df = new DecimalFormat("##0.000", otherSymbols);
                 break;
             default:
-                df = new DecimalFormat("##0.0000");
+                df = new DecimalFormat("##0.0000", otherSymbols);
         }
         return Double.parseDouble(df.format(value));
     }
@@ -170,48 +185,54 @@ public class tools {
     //exports shared Preferences
     public static void exportSharedPreferences(final Context c){
 
-        File path = new File(Environment.getExternalStorageDirectory().toString());
-        final File file = new File(path, "HAPPSharedPreferences");
+        final File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "HAPP_Settings");
+        File folder = new File(Environment.getExternalStorageDirectory() + "/" + Environment.DIRECTORY_DOCUMENTS);
 
-        new AlertDialog.Builder(c)
-                .setMessage("Export Settings to " + path + "/" + file + "?")
-                .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface dialog, int which) {
+        boolean dirExists = folder.exists();
+        if (!dirExists) dirExists = folder.mkdir();
 
-                        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(c);
-                        try
-                        {
-                            FileWriter fw = new FileWriter(file);
-                            PrintWriter pw = new PrintWriter(fw);
-                            Map<String,?> prefsMap = prefs.getAll();
-                            for(Map.Entry<String,?> entry : prefsMap.entrySet())
-                            {
-                                pw.println(entry.getKey() + "::" + entry.getValue().toString());
+        if (dirExists) {
+            new AlertDialog.Builder(c)
+                    .setMessage(c.getString(R.string.tools_export_to) + file + "?")
+                    .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+
+                            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(c);
+                            try {
+                                FileWriter fw = new FileWriter(file);
+                                PrintWriter pw = new PrintWriter(fw);
+                                Map<String, ?> prefsMap = prefs.getAll();
+                                for (Map.Entry<String, ?> entry : prefsMap.entrySet()) {
+                                    pw.println(entry.getKey() + "::" + entry.getValue().toString());
+                                }
+                                pw.close();
+                                fw.close();
+                                Toast.makeText(c, c.getString(R.string.tools_exported), Toast.LENGTH_LONG).show();
+                                Log.d(TAG, "Exported settings to " + file.toString());
+                            } catch (Exception e) {
+                                Crashlytics.logException(e);
+                                Log.e(TAG, "Error exporting settings to " + file.toString() + " " + e.getLocalizedMessage());
                             }
-                            pw.close();
-                            fw.close();
-                            Toast.makeText(c, "Exported", Toast.LENGTH_LONG).show();
                         }
-                        catch (Exception e){
-                            Crashlytics.logException(e);
+                    })
+                    .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            // do nothing
                         }
-                    }
-                })
-                .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface dialog, int which) {
-                        // do nothing
-                    }
-                })
-                .show();
+                    })
+                    .show();
+        } else {
+            Toast.makeText(c, c.getString(R.string.tools_export_failed), Toast.LENGTH_LONG).show();
+            Log.e(TAG, "Could not create export folder, export aborted " + file.toString());
+        }
     }
     //imports shared Preferences
     public static void importSharedPreferences(final Context c){
 
-        File path = new File(Environment.getExternalStorageDirectory().toString());
-        final File file = new File(path, "HAPPSharedPreferences");
+        final File file = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "HAPP_Settings");
 
         new AlertDialog.Builder(c)
-                .setMessage("Import Settings from " + path + "/" + file + "?")
+                .setMessage(c.getString(R.string.tools_import_from) + file + "?")
                 .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int which) {
 
@@ -240,15 +261,16 @@ public class tools {
                             }
                             reader.close();
                             editor.commit();
-                            Toast.makeText(c, "Settings Imported", Toast.LENGTH_LONG).show();
+                            Toast.makeText(c, c.getString(R.string.tools_imported), Toast.LENGTH_LONG).show();
+                            Log.d(TAG, "Imported settings from " + file.toString());
+
 
                         } catch (FileNotFoundException e2) {
-                            Toast.makeText(c, "File not found " + file, Toast.LENGTH_LONG).show();
-                            e2.printStackTrace();
+                            Toast.makeText(c, c.getString(R.string.tools_file_not_found) + file, Toast.LENGTH_LONG).show();
+                            Log.e(TAG, "Settings File not found " + file.toString());
 
                         } catch (IOException e2) {
-                            e2.printStackTrace();
-
+                            Log.e(TAG, "Error importing settings " + file.toString() + " " + e2.getLocalizedMessage());
                         }
                     }
                 })
@@ -271,13 +293,15 @@ public class tools {
             return 0.0;
         }
 
-        Locale theLocale = Locale.getDefault();
-        NumberFormat numberFormat = DecimalFormat.getInstance(theLocale);
-        Number theNumber;
-        try {
-            theNumber = numberFormat.parse(string);
-            return theNumber.doubleValue();
-        } catch (ParseException e) {
+
+
+        //Locale theLocale = Locale.getDefault();
+        //NumberFormat numberFormat = DecimalFormat.getInstance(theLocale);
+        //Number theNumber;
+        //try {
+        //    theNumber = numberFormat.parse(string);
+        //    return theNumber.doubleValue();
+        //} catch (ParseException e) {
             // The string value might be either 99.99 or 99,99, depending on Locale.
             // We can deal with this safely, by forcing to be a point for the decimal separator, and then using Double.valueOf ...
             // http://stackoverflow.com/a/21901846/4088013
@@ -298,28 +322,28 @@ public class tools {
                 return 0.0;
             }
         }
-    }
+    //}
 
     /**
      * @param date the date in the format "yyyy-MM-dd"
      */
-    public static long getStartOfDayInMillis(Date date) {
+    public static Date getStartOfDay(Date date) {
         Calendar calendar = Calendar.getInstance();
         calendar.setTime(date);
         calendar.set(Calendar.HOUR_OF_DAY, 0);
         calendar.set(Calendar.MINUTE, 0);
         calendar.set(Calendar.SECOND, 0);
         calendar.set(Calendar.MILLISECOND, 0);
-        return ((calendar.getTimeInMillis()+calendar.getTimeZone().getOffset(calendar.getTimeInMillis())));
+        return new Date(calendar.getTimeInMillis()+calendar.getTimeZone().getOffset(calendar.getTimeInMillis()));
     }
     /**
      * @param date the date in the format "yyyy-MM-dd"
      */
-    public static long getEndOfDayInMillis(Date date) {
+    public static Date getEndOfDay(Date date) {
         // Add one day's time to the beginning of the day.
         // 24 hours * 60 minutes * 60 seconds * 1000 milliseconds = 1 day
-        long time =getStartOfDayInMillis(date) + (24 * 60 * 60 * 1000) - 1000;
-        return getStartOfDayInMillis(date) + (24 * 60 * 60 * 1000) - 1000;
+        long time =getStartOfDay(date).getTime() + (24 * 60 * 60 * 1000) - 1000;
+        return new Date(getStartOfDay(date).getTime() + (24 * 60 * 60 * 1000) - 1000);
     }
 
     //Allows user to select an external app for an action and saves to prefs
@@ -336,11 +360,11 @@ public class tools {
         // list package
         List<ResolveInfo> activityList = pm.queryIntentActivities(sharingIntent, 0);
 
-        objShareIntentListAdapter = new ShareIntentListAdapter(MainActivity.activity, activityList.toArray());
+        objShareIntentListAdapter = new ShareIntentListAdapter(MainActivity.getInstance(), activityList.toArray());
 
         // Create alert dialog box
         AlertDialog.Builder builder = new AlertDialog.Builder(c);
-        builder.setTitle("Insulin Treatment Apps installed");
+        builder.setTitle(c.getString(R.string.tools_Insulin_Apps));
         builder.setAdapter(objShareIntentListAdapter, new DialogInterface.OnClickListener() {
 
             public void onClick(DialogInterface dialog, int item) {
@@ -382,17 +406,26 @@ public class tools {
         } catch (IOException e) {
             logCat = e.getLocalizedMessage();
         } finally {
-            showAlertText(logCat, MainActivity.getInstace());
+            showAlertText(logCat, MainActivity.getInstance());
         }
     }
-    public static void showDebug(){
+    public static void showDebug(Realm realm){
         Profile profile = new Profile(new Date());
-        Pump pump = new Pump(new Date());
-        APSResult apsResult = APSResult.last();
-        Stats stats = Stats.last();
+        Pump pump = new Pump(profile, realm);
+        APSResult apsResult = APSResult.last(realm);
+        Stat stat = Stat.last(realm);
         Safety safety = new Safety();
+        String msg = "";
 
-        String  msg =   "Profile:" + "\n" +
+        PackageManager manager = MainActivity.getInstance().getPackageManager();
+        try {
+            PackageInfo info = manager.getPackageInfo(MainActivity.getInstance().getPackageName(), 0);
+                msg =   "HAPP Version: " + "\n" +
+                            "Code:  " + info.versionCode + " Name:" + info.versionName + "\n\n";
+        } catch (PackageManager.NameNotFoundException n){
+
+        }
+                msg +=  "Profile:" + "\n" +
                             profile.toString() + "\n\n" +
                             "Pump:" + "\n" +
                             pump.toString();
@@ -403,30 +436,29 @@ public class tools {
         } else {
                 msg +=  "\n\n" +
                         "APS Result:" + "\n" +
-                            "APS code has never been ran";
+                            " APS code has never been ran";
         }
-        if (stats != null) {
+        if (stat != null) {
                 msg +=  "\n\n" +
                         "Stats Result:" + "\n" +
-                            stats.toString();
+                            stat.toString();
         } else {
                 msg +=  "\n\n" +
                         "Stats Result:" + "\n" +
-                            "Stats code has never been ran";
+                            " Stats code has never been ran";
         }
                 msg +=  "\n\n" +
                         "Safety Result:" + "\n" +
                             safety.toString();
 
         String bgList="";
-        double fuzz = (1000 * 30 * 5);
-        double start_time = (new Date().getTime() - ((60000 * 60 * 24))) / fuzz;
-        List<Bg> bgReadings = Bg.latestForGraph(4, start_time * fuzz);
-
+        int bgCount=0;
+        List<Bg> bgReadings = Bg.latest(realm);
         for (Bg bg : bgReadings){
             bgList += bg.toString() + "\n";
+            bgCount++;
+            if (bgCount == 5) break;
         }
-
         if (bgList.equals("")){
                 msg +=  "\n\n" +
                         "Last BG Readings:" + "\n" +
@@ -437,17 +469,17 @@ public class tools {
                             bgList;
         }
 
-        showAlertText(msg, MainActivity.getInstace());
+        showAlertText(msg, MainActivity.getInstance());
     }
     public static void showAlertText(final String msg, final Context context){
         try {
             AlertDialog alertDialog = new AlertDialog.Builder(context)
                     .setMessage(msg)
-                    .setPositiveButton("Copy to Clipboard", new DialogInterface.OnClickListener() {
+                    .setPositiveButton(context.getText(R.string.tools_to_clipboard), new DialogInterface.OnClickListener() {
                         public void onClick(DialogInterface dialog, int which) {
                             ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
                             clipboard.setText(msg);
-                            Toast.makeText(MainActivity.getInstace(), "Copied to clipboard", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(MainActivity.getInstance(), context.getText(R.string.tools_to_clipboard), Toast.LENGTH_SHORT).show();
                         }
                     })
                     .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
@@ -465,5 +497,248 @@ public class tools {
             Crashlytics.logException(e);
         }
     }
+
+    public static int getIntegrationStatusImg(String state){
+        switch (state.toLowerCase()) {
+            case "to sync":
+                return R.drawable.autorenew;
+            case "sent":
+                return R.drawable.arrow_right_bold_circle;
+            case "received":
+                return R.drawable.information;
+            case "delayed":
+                return R.drawable.clock;
+            case "delivered":
+                return R.drawable.checkbox_marked_circle;
+            case "error":
+            case "error_ack":
+                return R.drawable.alert_circle;
+            case "deleted":
+                return R.drawable.delete;
+            default:
+                if (state.equals("")) {
+                    return 0;
+                } else {
+                    return R.drawable.alert_circle;
+                }
+        }
+    }
+
+    public static String getActiveProfileName(String profile, SharedPreferences prefs, Context c){
+        Integer activeProfileIndex = -1;
+        String profileName;
+        String profileRawString = prefs.getString(profile, "");
+
+        if (profileRawString.equals("")){
+            //We have no profiles, return default name
+            profileName = c.getString(R.string.default_string);
+        } else {
+            ArrayList<ArrayList>  profileDetailsArray = new Gson().fromJson(profileRawString,new TypeToken<List<ArrayList>>() {}.getType() );
+            for (int index = 0; index < profileDetailsArray.size(); index++) {
+                if (profileDetailsArray.get(index).get(1).equals("active")) activeProfileIndex = index;
+            }
+
+            if (activeProfileIndex.equals(-1)){
+                //cannot find profile, return default
+                profileName = c.getString(R.string.default_string);
+            } else {
+                profileName = profileDetailsArray.get(activeProfileIndex).get(0).toString();
+            }
+        }
+        return profileName;
+    }
+    public static List<TimeSpan> getActiveProfile(String profile, SharedPreferences prefs){
+        Integer activeProfileIndex=-1;
+        List<TimeSpan> activeProfile;
+        String profileRawString = prefs.getString(profile, "");
+
+        if (profileRawString.equals("")){
+            //We do not have any profiles, return an empty one
+            activeProfile = newEmptyProfile();
+        } else {
+            ArrayList<ArrayList>  profileDetailsArray = new Gson().fromJson(profileRawString,new TypeToken<List<ArrayList>>() {}.getType() );
+            for(int index = 0; index < profileDetailsArray.size(); index++){
+                if (profileDetailsArray.get(index).get(1).equals("active")) activeProfileIndex = index;
+            }
+
+            if (activeProfileIndex.equals(-1)){
+                //Could not find the profile, return an empty one
+                activeProfile = newEmptyProfile();
+                Crashlytics.log(1,TAG,"Could not find the profile, return an empty one "  + profile);
+            } else {
+                activeProfile = getProfile(profile, activeProfileIndex, prefs);
+            }
+        }
+        return activeProfile;
+    }
+    public static Integer getTimeSlotsDefaultRange(String profile, SharedPreferences prefs){
+        //returns the default time slots range in mins
+        String profileDefaultTimeRangeName = "";
+
+        switch (profile) {
+            case Constants.profile.ISF_PROFILE:
+                profileDefaultTimeRangeName    =   Constants.profile.ISF_PROFILE_DEFAULT_TIME_RANGE;
+                break;
+            case Constants.profile.BASAL_PROFILE:
+                profileDefaultTimeRangeName    =   Constants.profile.BASAL_PROFILE_DEFAULT_TIME_RANGE;
+                break;
+            case Constants.profile.CARB_PROFILE:
+                profileDefaultTimeRangeName    =   Constants.profile.CARB_PROFILE_DEFAULT_TIME_RANGE;
+                break;
+        }
+
+        if (profileDefaultTimeRangeName.equals("")){
+            Log.e(TAG, "Unknown profile: " + profile + ", not sure what default time slot range to return. Returning 60mins");
+            return 60;
+        } else {
+            Integer profileDefaultTimeRange = prefs.getInt(profileDefaultTimeRangeName, 60);
+            return profileDefaultTimeRange;
+        }
+    }
+    public static void setTimeSlotsDefaultRange(String profile, Integer timeSlotRange, SharedPreferences prefs){
+        String profileDefaultTimeRangeName = "";
+
+        switch (profile) {
+            case Constants.profile.ISF_PROFILE:
+                profileDefaultTimeRangeName    =   Constants.profile.ISF_PROFILE_DEFAULT_TIME_RANGE;
+                break;
+            case Constants.profile.BASAL_PROFILE:
+                profileDefaultTimeRangeName    =   Constants.profile.BASAL_PROFILE_DEFAULT_TIME_RANGE;
+                break;
+            case Constants.profile.CARB_PROFILE:
+                profileDefaultTimeRangeName    =   Constants.profile.CARB_PROFILE_DEFAULT_TIME_RANGE;
+                break;
+        }
+
+        if (profileDefaultTimeRangeName.equals("")){
+            Log.e(TAG, "Unknown profile: " + profile + ", not sure what profile to set default time slot range for.");
+        } else {
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putInt(profileDefaultTimeRangeName, timeSlotRange);
+            Log.d(TAG, "Saved default time slot for: " + profile + " " + timeSlotRange + "mins");
+            editor.apply();
+        }
+    }
+    public static List<TimeSpan> getProfile(String profile, int index, SharedPreferences prefs){
+        String profileArrayName="";
+        List<String> profileArray;
+        List<TimeSpan> timeSpansList;
+
+        switch (profile) {
+            case Constants.profile.ISF_PROFILE:
+                profileArrayName    =   Constants.profile.ISF_PROFILE_ARRAY;
+                break;
+            case Constants.profile.BASAL_PROFILE:
+                profileArrayName    =   Constants.profile.BASAL_PROFILE_ARRAY;
+                break;
+            case Constants.profile.CARB_PROFILE:
+                profileArrayName    =   Constants.profile.CARB_PROFILE_ARRAY;
+                break;
+        }
+
+        if (profileArrayName.equals("")){
+            Log.e(TAG, "Unknown profile: " + profile + ", not sure what profile to load");
+            Crashlytics.log(1,TAG,"Unknown profile: " + profile + ", not sure what profile to load");
+            return newEmptyProfile();
+
+        } else {
+            String profileArrayJSON = prefs.getString(profileArrayName, "");                                        //RAW array of Profiles JSON
+
+            if (profileArrayJSON.equals("")) {
+                //cannot find any profiles, return an empty one
+                Crashlytics.log(1,TAG,"cannot find any profiles, return an empty one: " + profile);
+                timeSpansList = newEmptyProfile();
+            } else {
+                profileArray = new Gson().fromJson(profileArrayJSON, new TypeToken<List<String>>() {}.getType());   //The array of Profiles
+                String profileJSON = profileArray.get(index);                                                       //Raw Profile JSON
+                try {
+                    timeSpansList = new Gson().fromJson(profileJSON, new TypeToken<List<TimeSpan>>() {}.getType()); //The Profile itself
+                } catch (JsonSyntaxException j){
+                    Crashlytics.log("profileJSON: " + profileJSON);
+                    Crashlytics.logException(j);
+                    Log.e(TAG, "Error getting profileJSON: " + j.getLocalizedMessage() + " " + profileJSON);
+                    timeSpansList = newEmptyProfile();
+                }
+            }
+
+            return timeSpansList;
+        }
+    }
+    public static void saveProfile(String profile, String profileName, List<TimeSpan> profileData, SharedPreferences prefs, Boolean makeActive){
+        ArrayList<ArrayList>  profileDetailsArray = new ArrayList<>();  //List of Profile details, row example(Name,State): Migrated, Active
+        List<String> profileArray = new ArrayList<>();                  //List of Profiles JSON, row example(Profile JSON):
+        String active="", profileArrayName="";
+        if (makeActive) active = "active";
+
+        switch (profile){
+            case Constants.profile.ISF_PROFILE:
+                profileArrayName    =   Constants.profile.ISF_PROFILE_ARRAY;
+                break;
+            case Constants.profile.BASAL_PROFILE:
+                profileArrayName    =   Constants.profile.BASAL_PROFILE_ARRAY;
+                break;
+            case Constants.profile.CARB_PROFILE:
+                profileArrayName    =   Constants.profile.CARB_PROFILE_ARRAY;
+                break;
+        }
+
+        if (profileArrayName.equals("")){
+            Log.e(TAG, "Unknown profile: " + profile + ", cannot save");
+            Crashlytics.log(1,TAG,"Unknown profile: " + profile + ", cannot save");
+        } else {
+
+            String profileDetailsArrayJSON = prefs.getString(profile, "");
+            if (!profileDetailsArrayJSON.equals("")) {
+                profileDetailsArray = new Gson().fromJson(profileDetailsArrayJSON,new TypeToken<List<ArrayList>>() {}.getType() );
+            }
+            String profileArrayJSON = prefs.getString(profileArrayName, "");
+            if (!profileArrayJSON.equals("")) {
+                profileArray = new Gson().fromJson(profileArrayJSON, new TypeToken<List<String>>() {}.getType());
+            }
+
+            //Checks if this Profile already exists
+            Integer profileIndex = -1;
+            if (profileDetailsArray.size() != 0) {
+                for (Integer d = 0; d < profileDetailsArray.size(); d++) {
+                    if (profileDetailsArray.get(d).get(0).equals(profileName)) profileIndex = d;
+                }
+            }
+
+            if (profileIndex.equals(-1)) {
+                //No profile found, add as new profile
+                ArrayList<String> profileDetailsRow = new ArrayList<>();
+                profileDetailsRow.add(profileName);                             //Name of this Profile
+                profileDetailsRow.add(active);                                  //Mark this Profile as Active or not
+                profileDetailsArray.add(profileDetailsRow);                     //Details of this Profile added
+
+                profileArray.add(new Gson().toJson(profileData));               //JSON of this profile added
+            } else {
+                //We found a matching profile, update it
+                profileArray.set(profileIndex, new Gson().toJson(profileData));  //JSON for this profile updated
+            }
+
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString(profile, new Gson().toJson(profileDetailsArray));      //Save details of the Profiles
+            Log.d(TAG, "saveProfile Details for: " + profile + " " + new Gson().toJson(profileDetailsArray));
+            editor.putString(profileArrayName, new Gson().toJson(profileArray));    //Save the Array of Profiles
+            Log.d(TAG, "saveProfile Array for: " + new Gson().toJson(profileArray));
+            editor.commit();
+        }
+    }
+    private static List<TimeSpan> newEmptyProfile(){
+        SimpleDateFormat sdfTimeDisplay = new SimpleDateFormat("HH:mm", Resources.getSystem().getConfiguration().locale);
+        List<TimeSpan> profile = new ArrayList<>();
+        TimeSpan timeSpan = new TimeSpan();
+
+        try {
+            timeSpan.setStartTime(  sdfTimeDisplay.parse("00:00"));
+            timeSpan.setEndTime(    sdfTimeDisplay.parse("23:59"));
+        }catch (ParseException e) {}
+        timeSpan.setValue(          0D);
+        profile.add(timeSpan);
+
+        return profile;
+    }
+
 
 }

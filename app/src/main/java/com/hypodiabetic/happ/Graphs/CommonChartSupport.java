@@ -7,7 +7,10 @@ import android.preference.PreferenceManager;
 import android.text.format.DateFormat;
 
 import com.hypodiabetic.happ.Constants;
+import com.hypodiabetic.happ.MainActivity;
+import com.hypodiabetic.happ.MainApp;
 
+import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -16,6 +19,7 @@ import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.TimeZone;
 
+import io.realm.Realm;
 import lecho.lib.hellocharts.model.Axis;
 import lecho.lib.hellocharts.model.AxisValue;
 import lecho.lib.hellocharts.model.Line;
@@ -33,17 +37,16 @@ public class CommonChartSupport {
     public Double yCOBMax = 80D;
     public Double yCOBMin = 0D;
 
-    public static final double fuzz = (1000 * 30 * 5);
-    public double  end_time = (new Date().getTime() + (60000 * 130))/fuzz;                          //Added 120 mins to this time for future values
-    public double  start_time = (new Date().getTime() - ((60000 * 60 * 24)))/fuzz;
-    public Context context;
+    public double  end_time         = (new Date().getTime() + (60000 * 130));                       //Added 120 mins to this time for future values
+    public Date start_time          = new Date(new Date().getTime() - ((60000 * 60 * 24)));         //24 Hours ago
+    //public Context context;
     public SharedPreferences prefs;
     public double highMark;
     public double lowMark;
     public double defaultMinY;
     public double defaultMaxY;
     public boolean doMgdl;
-    final int pointSize;
+    //final int pointSize;
     public int axisTextSize;
     final int previewAxisTextSize;
     final int hoursPreviewStep;
@@ -54,25 +57,29 @@ public class CommonChartSupport {
 
     public Double maxBasal;                                                                         //Added Max user bolus
 
+    public Realm realm;
+    public SimpleDateFormat sdfHour;
 
-    public CommonChartSupport(Context context){
-        this.context        = context;
-        this.prefs          = PreferenceManager.getDefaultSharedPreferences(context);
+    public CommonChartSupport(Realm realm){
+        this.realm          = realm;
+        this.sdfHour        = new SimpleDateFormat("HH", MainApp.instance().getResources().getConfiguration().locale);
+        //this.context        = context;
+        this.prefs          = PreferenceManager.getDefaultSharedPreferences(MainApp.instance());
         this.highMark       = Double.parseDouble(prefs.getString("highValue", "170"));
         this.lowMark        = Double.parseDouble(prefs.getString("lowValue", "70"));
         this.doMgdl         = (prefs.getString("units", "mgdl").compareTo("mgdl") == 0);
         this.maxBasal       = Double.parseDouble(prefs.getString("max_basal", "4"));
         defaultMinY         = unitized(40);
         defaultMaxY         = unitized(250);
-        pointSize           = isXLargeTablet() ? 5 : 3;
-        axisTextSize        = isXLargeTablet() ? 20 : Axis.DEFAULT_TEXT_SIZE_SP;
-        previewAxisTextSize = isXLargeTablet() ? 12 : 5;
-        hoursPreviewStep    = isXLargeTablet() ? 2 : 1;
+        //pointSize           = isXLargeTablet() ? 5 : 3;
+        axisTextSize        = 8;//isXLargeTablet() ? 20 : Axis.DEFAULT_TEXT_SIZE_SP;
+        previewAxisTextSize = 7;//isXLargeTablet() ? 12 : 5;
+        hoursPreviewStep    = 2;//isXLargeTablet() ? 2 : 1;
     }
 
     public Line minShowLine() {
         List<PointValue> minShowValues = new ArrayList<PointValue>();
-        minShowValues.add(new PointValue((float) start_time, (float) defaultMinY));
+        minShowValues.add(new PointValue((float) start_time.getTime(), (float) defaultMinY));
         minShowValues.add(new PointValue((float) end_time, (float) defaultMinY));
         Line minShowLine = new Line(minShowValues);
         minShowLine.setHasPoints(false);
@@ -86,8 +93,8 @@ public class CommonChartSupport {
         List<AxisValue> xAxisValues = new ArrayList<AxisValue>();
         GregorianCalendar now = new GregorianCalendar();
         GregorianCalendar today = new GregorianCalendar(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH));
-        final java.text.DateFormat timeFormat = hourFormat();
-        timeFormat.setTimeZone(TimeZone.getDefault());
+        //final java.text.DateFormat timeFormat = hourFormat();
+        //timeFormat.setTimeZone(TimeZone.getDefault());
         double start_hour_block = today.getTime().getTime();
         double timeNow = new Date().getTime() + (60000 * 120);                                      //2 Hours into the future
         for(int l=0; l<=24; l++) {
@@ -100,7 +107,8 @@ public class CommonChartSupport {
         }
         for(int l=0; l<=26; l++) {                                                                  //2 Hours into the future
             double timestamp = (endHour - (60000 * 60 * l));
-            xAxisValues.add(new AxisValue((long)(timestamp/fuzz), (timeFormat.format(timestamp)).toCharArray()));
+            //xAxisValues.add(new AxisValue((long)(timestamp), (timeFormat.format(timestamp)).toCharArray()));
+            xAxisValues.add(new AxisValue((long)(timestamp), (sdfHour.format(timestamp)).toCharArray()));
         }
         xAxis.setValues(xAxisValues);
         xAxis.setHasLines(true);
@@ -152,13 +160,13 @@ public class CommonChartSupport {
         return percent * (yBgMax - yBgMin) + yBgMin;
     }
 
-    private boolean isXLargeTablet() {
-        return (context.getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_XLARGE;
-    }
+    //private boolean isXLargeTablet() {
+    //    return (context.getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_XLARGE;
+    //}
 
-    public SimpleDateFormat hourFormat() {
-        return new SimpleDateFormat(DateFormat.is24HourFormat(context) ? "HH" : "h a");
-    }
+    //public SimpleDateFormat hourFormat() {
+    //    return new SimpleDateFormat(DateFormat.is24HourFormat(context) ? "HH" : "h a");
+    //}
 
     public double unitized(double value) {
         if(doMgdl) {

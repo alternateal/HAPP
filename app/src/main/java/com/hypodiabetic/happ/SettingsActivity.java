@@ -82,7 +82,6 @@ public class SettingsActivity extends PreferenceActivity {
             addPreferencesFromResource(R.xml.pref_misc);
 
 
-
             setPreferenceListener(findPreference("highValue"));
             setPreferenceListener(findPreference("lowValue"));
             setPreferenceListener(findPreference("units"));
@@ -91,13 +90,8 @@ public class SettingsActivity extends PreferenceActivity {
             setPreferenceListener(findPreference("aps_mode"));
             setPreferenceListener(findPreference("aps_algorithm"));
             setPreferenceListener(findPreference("pump_name"));
-            findPreference("export").setSummary("Export path: " + Environment.getExternalStorageDirectory().toString());
-
-            for (int x=0; x<24; x++ ){
-                setPreferenceListener(findPreference("basal_" + x));
-                setPreferenceListener(findPreference("isf_" + x));
-                setPreferenceListener(findPreference("carbratio_" + x));
-            }
+            setPreferenceListener(findPreference("cgm_source"));
+            findPreference("export").setSummary("Export path: " + Environment.getExternalStorageDirectory() + "/" + Environment.DIRECTORY_DOCUMENTS + "/HAPP_Settings");
 
             Preference preference_export = findPreference("export");
             preference_export.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
@@ -126,10 +120,41 @@ public class SettingsActivity extends PreferenceActivity {
                 }
             });
 
+            final Preference isf_profile = findPreference(Constants.profile.ISF_PROFILE);
+            isf_profile.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    Intent start_profile = new Intent(MainApp.instance(), Profile_EditorV2.class);
+                    start_profile.putExtra("PROFILE", Constants.profile.ISF_PROFILE);
+                    startActivity(start_profile);
+                    return true;
+                }
+            });
+            final Preference carb_profile = findPreference(Constants.profile.CARB_PROFILE);
+            carb_profile.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    Intent start_profile = new Intent(MainApp.instance(), Profile_EditorV2.class);
+                    start_profile.putExtra("PROFILE", Constants.profile.CARB_PROFILE);
+                    startActivity(start_profile);
+                    return true;
+                }
+            });
+            final Preference basal_profile = findPreference(Constants.profile.BASAL_PROFILE);
+            basal_profile.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    Intent start_profile = new Intent(MainApp.instance(), Profile_EditorV2.class);
+                    start_profile.putExtra("PROFILE", Constants.profile.BASAL_PROFILE);
+                    startActivity(start_profile);
+                    return true;
+                }
+            });
 
-            PackageManager manager = MainActivity.activity.getPackageManager();
+
+            PackageManager manager = MainActivity.getInstance().getPackageManager();
             try {
-                PackageInfo info = manager.getPackageInfo(MainActivity.activity.getPackageName(), 0);
+                PackageInfo info = manager.getPackageInfo(MainActivity.getInstance().getPackageName(), 0);
                 Preference preference_version = findPreference("version");
                 preference_version.setSummary("Code:" + info.versionCode + " Name:" + info.versionName);
             } catch (PackageManager.NameNotFoundException n){
@@ -150,26 +175,9 @@ public class SettingsActivity extends PreferenceActivity {
                 case "target_bg":
                     preference.setSummary(tools.formatDisplayBG(Double.parseDouble(stringValue),true,MainApp.instance()));
                     break;
-                case "basal_":
-                case "carbratio_":
-                case "isf_":
-                    //24H Profile info, if preference has no value, get set summary to value of parent (this is what Profile code does)
-                    if (stringValue.equals("")) {
-                        preference.setSummary("<Inherits from parent, or defaults to 0>");
-                    } else {
-                        switch (preference.getKey()){
-                            case "basal_":
-                                preference.setSummary(tools.formatDisplayBasal(Double.parseDouble(stringValue), false));
-                            case "carbratio_":
-                                preference.setSummary(tools.formatDisplayCarbs(Double.parseDouble(stringValue)));
-                            case "isf_":
-                                preference.setSummary(tools.formatDisplayBG(Double.parseDouble(stringValue), true, MainApp.instance()));
-                        }
-                    }
-                    break;
                 case "aps_loop":
                     int aps_loop_int = Integer.parseInt(stringValue);
-                    preference.setSummary("every " + (aps_loop_int / 60000) + " mins");
+                    preference.setSummary(MainApp.instance().getString(R.string.every) + " " + (aps_loop_int / 60000) + " " + MainApp.instance().getString(R.string.mins));
                     break;
                 default:
                     preference.setSummary(stringValue);

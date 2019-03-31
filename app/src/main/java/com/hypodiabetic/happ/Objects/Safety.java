@@ -5,8 +5,11 @@ import android.preference.PreferenceManager;
 
 import com.hypodiabetic.happ.Constants;
 import com.hypodiabetic.happ.MainApp;
+import com.hypodiabetic.happ.tools;
 
 import java.util.Date;
+import java.util.List;
+import com.hypodiabetic.happ.TimeSpan;
 
 /**
  * Created by Tim on 19/02/2016.
@@ -25,28 +28,27 @@ public class Safety {
 
     public Safety(){
 
-        user_max_bolus          = Double.parseDouble(prefs.getString("max_bolus", "4"));
+        user_max_bolus          = tools.stringToDouble(prefs.getString("max_bolus", "0"));
         hardcoded_Max_Bolus     = Constants.HARDCODED_MAX_BOLUS;
-        max_basal               = Double.parseDouble(prefs.getString("max_basal", "2"));
+        max_basal               = tools.stringToDouble(prefs.getString("max_basal", "0"));
         max_daily_basal         = getMaxDailyBasal();
-        max_iob                 = Double.parseDouble(prefs.getString("max_iob", "3"));
+        max_iob                 = tools.stringToDouble(prefs.getString("max_iob", "0"));
     }
 
 
     public Double getMaxBasal(Profile profile){
         Double maxSafeBasal = Math.min(max_basal, 3 * max_daily_basal);
-        maxSafeBasal = Math.min(maxSafeBasal, 4 * profile.current_basal);
+        maxSafeBasal = Math.min(maxSafeBasal, 4 * profile.getCurrentBasal());
         return maxSafeBasal;
     }
     private Double getMaxDailyBasal(){
         Double basalMax     = 0D;
-        Double basalFound;
-        for(int h=0; h<=12; h++) {
-            if (!prefs.getString("basal_" + h, "empty").equals("empty") && !prefs.getString("basal_" + h, "").equals("")) {
-                basalFound = Double.parseDouble(prefs.getString("basal_" + h, "0"));
-                if (basalFound > basalMax) basalMax = basalFound;
-            }
+        List<TimeSpan> profileTimeSpanList = tools.getActiveProfile(Constants.profile.BASAL_PROFILE, prefs);
+
+        for (TimeSpan profileTimeSpan : profileTimeSpanList) {
+            if (profileTimeSpan.getValue() > basalMax) basalMax = profileTimeSpan.getValue();
         }
+
         return basalMax;
     }
 
@@ -61,10 +63,10 @@ public class Safety {
         }
     }
 
-    public boolean checkIsBolusSafeToSend(Treatments bolus, Treatments correction){
+    public boolean checkIsBolusSafeToSend(Bolus bolus, Bolus correction){
         Long bolusDiffInMins=0L, corrDiffInMins=0L;
-        if (bolus != null) bolusDiffInMins = (new Date().getTime() - bolus.datetime) /1000/60;
-        if (correction != null) corrDiffInMins = (new Date().getTime() - correction.datetime) /1000/60;
+        if (bolus != null) bolusDiffInMins = (new Date().getTime() - bolus.getTimestamp().getTime()) /1000/60;
+        if (correction != null) corrDiffInMins = (new Date().getTime() - correction.getTimestamp().getTime()) /1000/60;
         if (bolusDiffInMins > Constants.BOLUS_MAX_AGE_IN_MINS || bolusDiffInMins < 0 || corrDiffInMins > Constants.BOLUS_MAX_AGE_IN_MINS || corrDiffInMins < 0) {
             return false;
         } else {
@@ -74,11 +76,12 @@ public class Safety {
 
     @Override
     public String toString(){
-        return  "user_max_bolus: " + user_max_bolus + "\n" +
-                " hardcoded_Max_Bolus:" + hardcoded_Max_Bolus + "\n" +
-                " max_basal:" + max_basal + "\n" +
-                " max_daily_basal:" + max_daily_basal + "\n" +
-                " max_iob:" + max_iob;
+        return  " user_max_bolus:       " + user_max_bolus + "\n" +
+                " hardcoded_Max_Bolus:  " + hardcoded_Max_Bolus + "\n" +
+                " user_max_basal:       " + max_basal + "\n" +
+                " max_daily_basal:      " + max_daily_basal + "\n" +
+                " current_max_basal:    " + getMaxBasal(new Profile(new Date())) + "\n" +
+                " user_max_iob:         " + max_iob;
     }
 
 }

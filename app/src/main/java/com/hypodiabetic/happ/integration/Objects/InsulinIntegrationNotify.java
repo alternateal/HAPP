@@ -8,8 +8,8 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.support.design.widget.Snackbar;
-import android.support.v4.app.NotificationManagerCompat;
 import android.support.v7.app.NotificationCompat;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -19,17 +19,25 @@ import android.widget.ListView;
 import android.widget.SimpleAdapter;
 import android.widget.TextView;
 
+import com.hypodiabetic.happ.Constants;
 import com.hypodiabetic.happ.MainActivity;
 import com.hypodiabetic.happ.MainApp;
 import com.hypodiabetic.happ.Notifications;
+import com.hypodiabetic.happ.Objects.Bolus;
 import com.hypodiabetic.happ.Objects.Integration;
+import com.hypodiabetic.happ.Objects.Profile;
+import com.hypodiabetic.happ.Objects.Pump;
+import com.hypodiabetic.happ.Objects.TempBasal;
 import com.hypodiabetic.happ.R;
 import com.hypodiabetic.happ.tools;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+
+import io.realm.Realm;
 
 /**
  * Created by Tim on 14/02/2016.
@@ -44,45 +52,55 @@ public class InsulinIntegrationNotify {
     String snackbarMsg;                                                                             //Summary String for Snackbar
     String errorMsg;                                                                                //Summary String of error items
     public Boolean foundError;                                                                      //Where errors found?
+    public Boolean haveUpdates;                                                                     //Updates found?
+    private Realm realm;
+    private Pump pump;
+    private static String TAG = "InsulinIntegratNotify";
 
-    public InsulinIntegrationNotify(){
+    public InsulinIntegrationNotify(Realm realm){
+        Log.d(TAG, "InsulinIntegrationNotify: START");
+        this.realm              =   realm;
         detailList              =   new ArrayList<>();
         detailListErrorsOnly    =   new ArrayList<>();
-        recentlyUpdated         =   Integration.getUpdatedInLastMins(1,"insulin_integration_app");
-        withErrors              =   Integration.getIntegrationsWithErrors("insulin_integration_app");
+        recentlyUpdated         =   Integration.getUpdatedInLastMins(1, Constants.treatmentService.INSULIN_INTEGRATION_APP, realm);
+        withErrors              =   Integration.getIntegrationsWithErrors(Constants.treatmentService.INSULIN_INTEGRATION_APP, realm);
         snackbarMsg             =   "";
         errorMsg                =   "";
         foundError              =   false;
-        SimpleDateFormat sdfDateTime = new SimpleDateFormat("dd MMM HH:mm", MainApp.instance().getResources().getConfiguration().locale);
+        haveUpdates             =   false;
+        pump                    =   new Pump(new Profile(new Date()), realm);
+        SimpleDateFormat sdfDateTime    = new SimpleDateFormat("dd MMM HH:mm", MainApp.instance().getResources().getConfiguration().locale);
+        SimpleDateFormat sdfTime        = new SimpleDateFormat("HH:mm", MainApp.instance().getResources().getConfiguration().locale);
+        if (recentlyUpdated.size() > 0) haveUpdates = true;
 
         for (Integration integration : recentlyUpdated) {
-            if (!integration.state.equals("error") && !integration.state.equals("error_ack")) {     //Deal with errors later
-                ObjectToSync integrationWithDetails = new ObjectToSync(integration);
+            if (!integration.getState().equals("error") && !integration.getState().equals("error_ack")) {     //Deal with errors later
                 HashMap<String, String> detailListItem = new HashMap<String, String>();
 
-                if (integrationWithDetails.state.equals("delete_me")) {
-                    integration.delete();
-                } else {
+                if (!integration.getState().equals("delete_me")) {
 
-                    switch (integrationWithDetails.happ_object_type) {
+                    switch (integration.getLocal_object()) {
                         case "bolus_delivery":
-                            detailListItem.put("value", tools.formatDisplayInsulin(integrationWithDetails.value1, 2));
-                            detailListItem.put("summary", integrationWithDetails.value3);
-                            snackbarMsg += integrationWithDetails.state.toUpperCase() + ": " + tools.formatDisplayInsulin(integrationWithDetails.value1, 2) + " " + integrationWithDetails.value3 + "\n";
+                            Bolus bolus = Bolus.getBolus(integration.getLocal_object_id(), realm);
+                            detailListItem.put("value", tools.formatDisplayInsulin(bolus.getValue(), 2));
+                            detailListItem.put("summary", bolus.getType());
+                            snackbarMsg += integration.getState().toUpperCase() + ": " + tools.formatDisplayInsulin(bolus.getValue(), 2) + " " + integration.getType() + " " + sdfTime.format(integration.getDate_updated()) + "\n";
                             break;
 
                         case "temp_basal":
-                            detailListItem.put("value", tools.formatDisplayBasal(integrationWithDetails.value1, true));
-                            detailListItem.put("summary", "(" + integrationWithDetails.value2 + "%) " + integrationWithDetails.value3 + "mins");
-                            snackbarMsg += integrationWithDetails.state.toUpperCase() + ": " + tools.formatDisplayBasal(integrationWithDetails.value1, false) + " (" + integrationWithDetails.value2 + "%) " + integrationWithDetails.value3 + "mins\n";
+                            TempBasal tempBasal = TempBasal.getTempBasalByID(integration.getLocal_object_id(), realm);
+                            pump.setNewTempBasal(null, tempBasal);
+                            detailListItem.put("value", tools.formatDisplayBasal(tempBasal.getRate(), true));
+                            detailListItem.put("summary", "(" + pump.getTempBasalPercent() + "%) " + tempBasal.getDuration() + "mins");
+                            snackbarMsg += integration.getState().toUpperCase() + ": " + tools.formatDisplayBasal(tempBasal.getRate(), false) + " (" + pump.getTempBasalPercent() + "%) " + tempBasal.getDuration() + "mins " + sdfTime.format(integration.getDate_updated()) + "\n";
                             break;
                     }
-                    detailListItem.put("happObjectType", integrationWithDetails.happ_object_type);
-                    detailListItem.put("state", integrationWithDetails.state.toUpperCase());
-                    detailListItem.put("details", integrationWithDetails.details);
-                    detailListItem.put("action", "action:" + integrationWithDetails.action);
-                    detailListItem.put("date", sdfDateTime.format(integration.date_updated));
-                    detailListItem.put("intID", "INT ID:" + integration.getId());
+                    detailListItem.put("happObjectType",    integration.getLocal_object());
+                    detailListItem.put("state",             integration.getState().toUpperCase());
+                    detailListItem.put("details",           integration.getDetails());
+                    detailListItem.put("action",            "action:" + integration.getAction());
+                    detailListItem.put("date",              sdfDateTime.format(integration.getDate_updated()));
+                    detailListItem.put("intID",             "INT ID:" + integration.getId());
                     detailList.add(detailListItem);
                 }
             }
@@ -90,35 +108,36 @@ public class InsulinIntegrationNotify {
 
         if (withErrors.size() > 0) foundError = true;
         for (Integration integrationWithError : withErrors) {
-            ObjectToSync integrationWithDetails = new ObjectToSync(integrationWithError);
             HashMap<String, String> detailListItem = new HashMap<String, String>();
 
-            if (integrationWithDetails.state.equals("delete_me")) {
-                integrationWithError.delete();
-            } else {
+            if (!integrationWithError.getState().equals("deleted")) {
 
-                switch (integrationWithDetails.happ_object_type) {
+                switch (integrationWithError.getLocal_object()) {
                     case "bolus_delivery":
-                        detailListItem.put("value", tools.formatDisplayInsulin(integrationWithDetails.value1, 2));
-                        detailListItem.put("summary", integrationWithDetails.value3);
-                        errorMsg += integrationWithDetails.state.toUpperCase() + ": " + tools.formatDisplayInsulin(integrationWithDetails.value1, 2) + " " + integrationWithDetails.value3 + "\n";
+                        Bolus bolus = Bolus.getBolus(integrationWithError.getLocal_object_id(), realm);
+                        detailListItem.put("value", tools.formatDisplayInsulin(bolus.getValue(), 2));
+                        detailListItem.put("summary", bolus.getType());
+                        errorMsg += integrationWithError.getState().toUpperCase() + ": " + tools.formatDisplayInsulin(bolus.getValue(), 2) + " " + bolus.getType() + "\n";
                         break;
 
                     case "temp_basal":
-                        detailListItem.put("value", tools.formatDisplayBasal(integrationWithDetails.value1, true));
-                        detailListItem.put("summary", "(" + integrationWithDetails.value2 + "%) " + integrationWithDetails.value3 + "mins");
-                        errorMsg += integrationWithDetails.state.toUpperCase() + ": " + tools.formatDisplayBasal(integrationWithDetails.value1, false) + " (" + integrationWithDetails.value2 + "%) " + integrationWithDetails.value3 + "mins\n";
+                        TempBasal tempBasal = TempBasal.getTempBasalByID(integrationWithError.getLocal_object_id(), realm);
+                        pump.setNewTempBasal(null, tempBasal);
+                        detailListItem.put("value", tools.formatDisplayBasal(tempBasal.getRate(), true));
+                        detailListItem.put("summary", "(" + pump.getTempBasalPercent() + "%) " + tempBasal.getDuration() + "mins");
+                        errorMsg += integrationWithError.getState().toUpperCase() + ": " + tools.formatDisplayBasal(tempBasal.getRate(), false) + " (" + pump.getTempBasalPercent() + "%) " + tempBasal.getDuration() + "mins\n";
                         break;
                 }
-                detailListItem.put("happObjectType", integrationWithDetails.happ_object_type);
-                detailListItem.put("state", integrationWithDetails.state.toUpperCase());
-                detailListItem.put("details", integrationWithDetails.details);
-                detailListItem.put("action", "action:" + integrationWithDetails.action);
-                detailListItem.put("date", sdfDateTime.format(integrationWithError.date_updated));
-                detailListItem.put("intID", "INT ID:" + integrationWithError.getId());
+                detailListItem.put("happObjectType",    integrationWithError.getLocal_object());
+                detailListItem.put("state",             integrationWithError.getState().toUpperCase());
+                detailListItem.put("details",           integrationWithError.getDetails());
+                detailListItem.put("action",            "action:" + integrationWithError.getAction());
+                detailListItem.put("date",              sdfDateTime.format(integrationWithError.getDate_updated()));
+                detailListItem.put("intID",             "INT ID:" + integrationWithError.getId());
                 detailListErrorsOnly.add(detailListItem);
             }
         }
+        Log.d(TAG, "InsulinIntegrationNotify: FINISH");
     }
 
     public Snackbar getSnackbar(View v){
@@ -141,7 +160,7 @@ public class InsulinIntegrationNotify {
                     dialog.setCanceledOnTouchOutside(true);
 
                     ListView list = (ListView) dialog.findViewById(R.id.integrationList);
-                    mySimpleAdapter adapter = new mySimpleAdapter(MainActivity.getInstace(), detailList, R.layout.integration_list_layout_insulin_summary,
+                    mySimpleAdapter adapter = new mySimpleAdapter(MainActivity.getInstance(), detailList, R.layout.integration_list_layout_insulin_summary,
                             new String[]{"value", "summary", "state", "details", "happObjectType", "action", "date"},
                             new int[]{R.id.insulinSummaryAmount, R.id.insulinSummarySummary, R.id.insulinSummaryState, R.id.insulinSummaryDetails, R.id.insulinSummaryHappObjectType, R.id.insulinSummaryAction, R.id.insulinSummaryDate});
                     list.setAdapter(adapter);
@@ -164,18 +183,19 @@ public class InsulinIntegrationNotify {
         dialog.setCanceledOnTouchOutside(true);
 
         TextView msg = (TextView) dialog.findViewById(R.id.integrationMsg);
-        msg.setText("These actions failed, they will NOT be resent and must be manually actioned.");
+        msg.setText(R.string.InsulinIntegrationNotify_actions_failed);
         msg.setVisibility(View.VISIBLE);
 
         Button buttonOK = (Button) dialog.findViewById(R.id.integrationOK);
-        buttonOK.setText("Acknowledge");
+        buttonOK.setText(R.string.InsulinIntegrationNotify_acknowledge);
         buttonOK.setVisibility(View.VISIBLE);
         buttonOK.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 for (Integration integrationWithError : withErrors) {
-                    integrationWithError.state  =   "error_ack";                                    //User has Acknowledged the errors
-                    integrationWithError.save();
+                    realm.beginTransaction();
+                    integrationWithError.setState   ("error_ack");                                    //User has Acknowledged the errors
+                    realm.commitTransaction();
                 }
                 Notifications.clear("INSULIN_UPDATE");
                 dialog.dismiss();
@@ -183,7 +203,7 @@ public class InsulinIntegrationNotify {
         });
 
         ListView list = (ListView) dialog.findViewById(R.id.integrationList);
-        mySimpleAdapter adapter = new mySimpleAdapter(MainActivity.getInstace(), detailListErrorsOnly, R.layout.integration_list_layout_insulin_summary,
+        mySimpleAdapter adapter = new mySimpleAdapter(MainActivity.getInstance(), detailListErrorsOnly, R.layout.integration_list_layout_insulin_summary,
                 new String[]{"value", "summary", "state", "details", "happObjectType", "action", "date", "intID"},
                 new int[]{R.id.insulinSummaryAmount, R.id.insulinSummarySummary, R.id.insulinSummaryState, R.id.insulinSummaryDetails, R.id.insulinSummaryHappObjectType, R.id.insulinSummaryAction, R.id.insulinSummaryDate, R.id.insulinSummaryINTID});
         list.setAdapter(adapter);
@@ -232,29 +252,8 @@ public class InsulinIntegrationNotify {
             View view = super.getView(position, convertView, parent);
 
             ImageView imageView = (ImageView) view.findViewById(R.id.insulinSummaryStateImage);
-            TextView textView = (TextView) view.findViewById(R.id.insulinSummaryState);
-            switch (textView.getText().toString().toLowerCase()) {
-                case "sent":
-                    imageView.setBackgroundResource(R.drawable.arrow_right_bold_circle);
-                    break;
-                case "received":
-                    imageView.setBackgroundResource(R.drawable.information);
-                    break;
-                case "delayed":
-                    imageView.setBackgroundResource(R.drawable.clock);
-                    break;
-                case "delivered":
-                case "set":
-                case "canceled":
-                    imageView.setBackgroundResource(R.drawable.checkbox_marked_circle);
-                    break;
-                case "error":
-                    imageView.setBackgroundResource(R.drawable.alert_circle);
-                    break;
-                default:
-                    imageView.setBackgroundResource(R.drawable.alert_circle);
-                    break;
-            }
+            TextView textView   = (TextView) view.findViewById(R.id.insulinSummaryState);
+            imageView.setBackgroundResource(tools.getIntegrationStatusImg(textView.getText().toString()));
 
             TextView happObject = (TextView) view.findViewById(R.id.insulinSummaryHappObjectType);
             TextView value = (TextView) view.findViewById(R.id.insulinSummaryAmount);

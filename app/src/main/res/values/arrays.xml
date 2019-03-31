@@ -4,12 +4,19 @@
         <item>mgdl</item>
         <item>mmol</item>
     </string-array>
-
     <string-array name="bgUnitValues">
         <item>mgdl</item>
         <item>mmol</item>
     </string-array>
 
+    <string-array name="cgmsources">
+        <item>xDrip</item>
+        <item>Nightscout (NSClient)</item>
+    </string-array>
+    <string-array name="cgmsourcesValues">
+        <item>xdrip</item>
+        <item>nsclient</item>
+    </string-array>
 
         <string-array name="pump_nameArray">
             <item>Medtronic - Basal Absolute (U/hr)</item>
@@ -17,7 +24,9 @@
             <item>Roche Accu-Chek Spirit Combo</item>
             <item>SOOIL Dana R</item>
             <item>Animas</item>
-            <item>OmniPod</item>
+            <item>OmniPod - (U/hr Mode Only)</item>
+            <item>Tslim - (% Mode)</item>
+            <item>Tslim - (Extended Bolus Mode)</item>
         </string-array>
         <string-array name="pump_nameValues">
             <item>medtronic_absolute</item>
@@ -26,7 +35,8 @@
             <item>dana_r</item>
             <item>animas</item>
             <item>omnipod</item>
-
+            <item>tslim</item>
+            <item>tslim_extended_bolus</item>
         </string-array>
 
     <string-array name="aps_modeArray">

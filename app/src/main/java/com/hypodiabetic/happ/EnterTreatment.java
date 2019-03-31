@@ -5,11 +5,8 @@ import android.app.Dialog;
 import android.app.TimePickerDialog;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
-import android.preference.PreferenceManager;
-import android.support.design.widget.Snackbar;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentPagerAdapter;
@@ -19,7 +16,6 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
-import android.util.TypedValue;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -41,27 +37,31 @@ import android.widget.TimePicker;
 import android.widget.Toast;
 
 import com.crashlytics.android.Crashlytics;
+import com.hypodiabetic.happ.Objects.Bolus;
+import com.hypodiabetic.happ.Objects.Carb;
 import com.hypodiabetic.happ.Objects.Integration;
 import com.hypodiabetic.happ.Objects.Profile;
-import com.hypodiabetic.happ.Objects.Treatments;
+import com.hypodiabetic.happ.Objects.RealmManager;
 import com.hypodiabetic.happ.integration.IntegrationsManager;
-import com.hypodiabetic.happ.integration.Objects.ObjectToSync;
 import com.hypodiabetic.happ.integration.openaps.IOB;
 import com.hypodiabetic.happ.services.FiveMinService;
 
 import org.json.JSONObject;
 
-import java.text.DecimalFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 
 
 public class EnterTreatment extends android.support.v4.app.FragmentActivity {
+
+    private static final String TAG = "EnterTreatment";
 
     //Enter treatment fragments
     eSectionsPagerAdapter eSectionsPagerAdapter;                                                    //will provide fragments for each of the sections
@@ -74,16 +74,15 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
     private static EditText editText_treatment_time;
     private static EditText editText_treatment_date;
     private static EditText editText_treatment_value;
-    private static Treatments manualTreatment               = new Treatments();
     //wizard treatment
     Fragment bolusWizardFragmentObject;
     private static EditText wizardSuggestedBolus;
     private static EditText wizardSuggestedCorrection;
     private static EditText wizardCarbs;
     private static String bwpCalculations;
-    private static Treatments wizzardBolusTreatment        = new Treatments();
-    private static Treatments wizzardCarbTratment          = new Treatments();
-    private static Treatments wizzardCorrectionTreatment   = new Treatments();
+    private static Bolus bolus              = new Bolus();
+    private static Carb carb                = new Carb();
+    private static Bolus bolusCorrection    = new Bolus();
 
     //Treatment Lists
     SectionsPagerAdapter mSectionsPagerAdapter;                                                     //will provide fragments for each of the sections
@@ -91,16 +90,43 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
     Fragment todayTreatmentsFragmentObject;
     Fragment yestTreatmentsFragmentObject;
     Fragment activeTreatmentsFragmentObject;
-    public static Long selectedListItemDB_ID;                                                       //Tracks the selected items Treatments DB ID
+    public static String selectedListItemDB_ID;                                                     //Tracks the selected items Treatments DB ID
     public static HashMap selectedListItemID;                                                       //Tracks the selected items list ID
+    public static String selectedListType;                                                          //Tracks the selected items Type
     public static Boolean listDirty=false;                                                          //Tracks if treatment lists are dirty and need to be reloaded
 
+    public static RealmManager realmManager;
+    public static Profile profile;
+    public static JSONObject iobNow, cobNow;
+
+    @Override
+    public void onDestroy(){
+        realmManager.closeRealm();
+        super.onDestroy();
+    }
+    @Override
+    public void onPause(){
+        realmManager.closeRealm();
+        super.onPause();
+    }
+    @Override
+    public void onResume(){
+        super.onResume();
+
+        Date dateNow = new Date();
+        profile      = new Profile(dateNow);
+        iobNow       = IOB.iobTotal(profile, dateNow, realmManager.getRealm());
+        cobNow       = Carb.getCOB(profile, dateNow, realmManager.getRealm());
+        Log.d(TAG, "onResume: Finished");
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_enter_treatment);
+
+        realmManager            = new RealmManager();
 
         //Treatment Lists
         // Create the adapter that will return a fragment .
@@ -112,12 +138,12 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
         todayTreatmentsFragmentObject   = new treatmentsListFragment();
         yestTreatmentsFragmentObject    = new treatmentsListFragment();
         activeTreatmentsFragmentObject  = new treatmentsListFragment();
-        Bundle bundleToday = new Bundle();
-        bundleToday.putString("LOAD", "TODAY");
-        Bundle bundleYest = new Bundle();
-        bundleYest.putString("LOAD", "YESTERDAY");
+        Bundle bundleToday  = new Bundle();
+        bundleToday.putString(Constants.treatments.LOAD, Constants.treatments.TODAY);
+        Bundle bundleYest   = new Bundle();
+        bundleYest.putString(Constants.treatments.LOAD, Constants.treatments.YESTERDAY);
         Bundle bundleActive = new Bundle();
-        bundleActive.putString("LOAD", "ACTIVE");
+        bundleActive.putString(Constants.treatments.LOAD, Constants.treatments.ACTIVE);
         todayTreatmentsFragmentObject.setArguments(bundleToday);
         yestTreatmentsFragmentObject.setArguments(bundleYest);
         activeTreatmentsFragmentObject.setArguments(bundleActive);
@@ -155,55 +181,51 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
     }
     public void wizardAccept(View view){
 
-        if (wizzardCarbTratment != null){
-            wizzardCarbTratment.value                   = tools.stringToDouble(wizardCarbs.getText().toString());
-            if (wizzardCarbTratment.value == 0)         wizzardCarbTratment = null;
+        if (carb != null){
+            carb.setValue(tools.stringToDouble(wizardCarbs.getText().toString()));
+            if (carb.getValue().equals(0D))              carb = null;
         }
-        if (wizzardBolusTreatment != null){
-            wizzardBolusTreatment.value                 = tools.stringToDouble(wizardSuggestedBolus.getText().toString());
-            if (wizzardBolusTreatment.value == 0)       wizzardBolusTreatment = null;
+        if (bolus != null){
+            bolus.setValue(tools.stringToDouble(wizardSuggestedBolus.getText().toString()));
+            if (bolus.getValue().equals(0D))             bolus = null;
         }
-        if (wizzardCorrectionTreatment != null){
-            wizzardCorrectionTreatment.value            = tools.stringToDouble(wizardSuggestedCorrection.getText().toString());
-            if (wizzardCorrectionTreatment.value == 0)  wizzardCorrectionTreatment = null;
+        if (bolusCorrection != null){
+            bolusCorrection.setValue(tools.stringToDouble(wizardSuggestedCorrection.getText().toString()));
+            if (bolusCorrection.getValue().equals(0D))   bolusCorrection = null;
         }
 
-        saveTreatment(wizzardCarbTratment, wizzardBolusTreatment, wizzardCorrectionTreatment, view);
+        saveTreatment(carb, bolus, bolusCorrection, view);
     }
     public void manualSave(View view){
         Date treatmentDateTime = new Date();
         SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyyHH:mm", getResources().getConfiguration().locale);
-        String treatmentDateTimeString;
 
         //gets the values the user has entered
-        treatmentDateTimeString     = editText_treatment_date.getText().toString() + editText_treatment_time.getText().toString();
-
         try {
-            treatmentDateTime = sdf.parse(treatmentDateTimeString);
+            treatmentDateTime = sdf.parse(editText_treatment_date.getText().toString() + editText_treatment_time.getText().toString());
         } catch (ParseException e) {
             Crashlytics.logException(e);
         }
 
-        manualTreatment                   = new Treatments();
-        manualTreatment.datetime          = treatmentDateTime.getTime();
-        manualTreatment.datetime_display  = treatmentDateTime.toString();
-        manualTreatment.note              = spinner_notes.getSelectedItem().toString();
-        manualTreatment.type              = spinner_treatment_type.getSelectedItem().toString();
-        manualTreatment.value             = tools.stringToDouble(editText_treatment_value.getText().toString());
-
-        if (manualTreatment.value > 0){
-            if (manualTreatment.type.equals("Carbs")){
-                saveTreatment(manualTreatment,null,null,view);
-
-            } else if (manualTreatment.type.equals("Insulin")){
-                if (manualTreatment.note.equals("bolus")) {
-                    saveTreatment(null,manualTreatment,null,view);
-
-                } else if (manualTreatment.note.equals("correction")){
-                    saveTreatment(null,null,manualTreatment,view);
-
+        switch (spinner_treatment_type.getSelectedItem().toString()){
+            case Constants.treatments.CARBS:
+                Carb carbManual = new Carb();
+                carbManual.setValue(tools.stringToDouble(editText_treatment_value.getText().toString()));
+                carbManual.setTimestamp(treatmentDateTime);
+                saveTreatment(carbManual,null,null,view);
+                break;
+            case Constants.treatments.INSULIN:
+                Bolus bolusManual = new Bolus();
+                bolusManual.setValue(tools.stringToDouble(editText_treatment_value.getText().toString()));
+                bolusManual.setTimestamp(treatmentDateTime);
+                if (spinner_notes.getSelectedItem().toString().equals(Constants.treatments.CORRECTION)){
+                    bolusManual.setType(Constants.treatments.CORRECTION);
+                    saveTreatment(null,null,bolusManual,view);
+                } else {
+                    bolusManual.setType(Constants.treatments.BOLUS);
+                    saveTreatment(null,bolusManual,null,view);
                 }
-            }
+                break;
         }
     }
     public void cancel(View view){
@@ -213,14 +235,16 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
     }
 
     //saves a new Treatment
-    public void saveTreatment(final Treatments carbs,final Treatments bolus,final Treatments correction,final View v){
+    public void saveTreatment(final Carb carbs, final Bolus bolus, final Bolus correction, final View v){
 
         if (bolus == null && correction == null && carbs != null){                                  //carbs to save only
-            carbs.save();
+            realmManager.getRealm().beginTransaction();
+            realmManager.getRealm().copyToRealm(carbs);
+            realmManager.getRealm().commitTransaction();
             editText_treatment_value.setText("");
             wizardCarbs.setText("");
-            IntegrationsManager.newCarbs(carbs);
-            Toast.makeText(this, carbs.value + " " + carbs.type + " entered", Toast.LENGTH_SHORT).show();
+            IntegrationsManager.newCarbs(carbs, realmManager.getRealm());
+            Toast.makeText(this, carbs.getValue() + " " + getString(R.string.treatments_carbs_entered), Toast.LENGTH_SHORT).show();
 
             refreshListFragments();
 
@@ -228,7 +252,7 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
             startService(new Intent(this, FiveMinService.class));
         } else {                                                                                    //We have insulin to deliver
 
-            pumpAction.setBolus(bolus, carbs, correction, v.getContext());
+            pumpAction.setBolus(bolus, carbs, correction, v.getContext(), realmManager.getRealm());
         }
 
     }
@@ -288,9 +312,9 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
         public CharSequence getPageTitle(int position) {
             switch (position) {
                 case 0:
-                    return "Bolus Wizard";
+                    return getString(R.string.treatments_bolus_wizard);
                 case 1:
-                    return "Manual Entry";
+                    return getString(R.string.treatments_manual_entry);
             }
             return null;
         }
@@ -302,6 +326,7 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
         private TextView bwDisplayIOBCorr;
         private TextView bwDisplayCarbCorr;
         private TextView bwDisplayBGCorr;
+        private TextView wizardCriticalLow;
 
 
         @Override
@@ -318,6 +343,7 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
             wizardSuggestedCorrection   = (EditText) rootView.findViewById(R.id.wizardSuggestedCorrection);
 
             buttonAccept            = (Button) rootView.findViewById(R.id.wizardAccept);
+            wizardCriticalLow       = (TextView) rootView.findViewById(R.id.wizardCriticalLow);
             bwpCalculations = "";
 
             //Run Bolus Wizard on suggested carb amount change
@@ -346,12 +372,12 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
                 carbValue = tools.stringToDouble(wizardCarbs.getText().toString());
             }
 
-            JSONObject bw = BolusWizard.bw(carbValue);
+            JSONObject bw = BolusWizard.bw(carbValue, realmManager.getRealm(),profile,cobNow.optDouble("cob",0D),iobNow.optDouble("iob",0D));
 
             //Bolus Wizard Display
-            bwDisplayIOBCorr.setText(           bw.optString("net_biob", "error"));
-            bwDisplayCarbCorr.setText(          bw.optString("insulin_correction_carbs", "error"));
-            bwDisplayBGCorr.setText(            bw.optString("insulin_correction_bg", "error"));
+            bwDisplayIOBCorr.setText(           bw.optString("net_biob", getString(R.string.error)));
+            bwDisplayCarbCorr.setText(          bw.optString("insulin_correction_carbs", getString(R.string.error)));
+            bwDisplayBGCorr.setText(            bw.optString("insulin_correction_bg", getString(R.string.error)));
             wizardSuggestedBolus.setText(       tools.round(bw.optDouble("suggested_bolus", 0), 1).toString());
             wizardSuggestedCorrection.setText(  tools.round(bw.optDouble("suggested_correction", 0), 1).toString());
 
@@ -366,35 +392,24 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
                                     bw.optString("suggested_correction_maths", "") + "\n\n" +
                                 "suggested bolus \n" +
                                     bw.optString("suggested_bolus_maths", "");
+            if (bw.optBoolean("bgCriticalLow")){
+                bwpCalculations = bwpCalculations + "\n\n" +
+                                getString(R.string.treatments_critical_low_no_bolus);
+                wizardCriticalLow.setVisibility(View.VISIBLE);
+            } else {
+                wizardCriticalLow.setVisibility(View.GONE);
+            }
 
+            bolus                   = new Bolus();
+            bolus.setType           (Constants.treatments.BOLUS);
+            bolus.setValue          (bw.optDouble("suggested_bolus", 0D));
+            bolusCorrection         = new Bolus();
+            bolusCorrection.setType (Constants.treatments.CORRECTION);
+            bolusCorrection.setValue(bw.optDouble("suggested_correction", 0D));
+            carb                     = new Carb();
+            carb.setValue           (carbValue);
 
-            Date dateNow = new Date();
-            //if (bw.optDouble("suggested_bolus", 0D) > 0) {
-                wizzardBolusTreatment                   = new Treatments();
-                wizzardBolusTreatment.datetime          = dateNow.getTime();
-                wizzardBolusTreatment.datetime_display  = dateNow.toString();
-                wizzardBolusTreatment.note              = "bolus";
-                wizzardBolusTreatment.type              = "Insulin";
-                wizzardBolusTreatment.value             = bw.optDouble("suggested_bolus", 0D);
-            //}
-            //if (bw.optDouble("suggested_correction", 0D) > 0) {
-                wizzardCorrectionTreatment                  = new Treatments();
-                wizzardCorrectionTreatment.datetime         = dateNow.getTime();
-                wizzardCorrectionTreatment.datetime_display = dateNow.toString();
-                wizzardCorrectionTreatment.note             = "correction";
-                wizzardCorrectionTreatment.type             = "Insulin";
-                wizzardCorrectionTreatment.value            = bw.optDouble("suggested_correction", 0D);
-            //}
-            //if (carbValue > 0){
-                wizzardCarbTratment                     = new Treatments();
-                wizzardCarbTratment.datetime            = dateNow.getTime();
-                wizzardCarbTratment.datetime_display    = dateNow.toString();
-                wizzardCarbTratment.note                = "";
-                wizzardCarbTratment.type                = "Carbs";
-                wizzardCarbTratment.value               = carbValue;
-            //}
-
-            if (wizzardCarbTratment.value == 0 && wizzardBolusTreatment.value == 0 && wizzardCorrectionTreatment.value == 0){
+            if (carb.getValue().equals(0D) && bolus.getValue().equals(0D) && bolusCorrection.getValue().equals(0D)){
                 buttonAccept.setEnabled(false);
             } else {
                 buttonAccept.setEnabled(true);
@@ -444,7 +459,7 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
             Calendar newCalendar = Calendar.getInstance();
 
             //Type Spinner
-            String[] treatmentTypes = {"Carbs", "Insulin"};
+            String[] treatmentTypes = {Constants.treatments.CARBS, Constants.treatments.INSULIN};
             ArrayAdapter<String> stringArrayAdapter= new ArrayAdapter<>(v.getContext(), android.R.layout.simple_spinner_dropdown_item, treatmentTypes);
             Spinner treatmentSpinner= (Spinner)v.findViewById(R.id.treatmentSpinner);
             treatmentSpinner.setAdapter(stringArrayAdapter);
@@ -452,8 +467,8 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
             treatmentSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                 @Override
                 public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                    if (parent.getSelectedItem().equals("Insulin")) {
-                        String[] InsulinNotes = {"bolus", "correction"};
+                    if (parent.getSelectedItem().equals(Constants.treatments.INSULIN)) {
+                        String[] InsulinNotes = {Constants.treatments.BOLUS,Constants.treatments.CORRECTION};
                         ArrayAdapter<String> stringArrayAdapter = new ArrayAdapter<>(v.getContext(), android.R.layout.simple_spinner_dropdown_item, InsulinNotes);
                         Spinner notesSpinner = (Spinner) v.findViewById(R.id.noteSpinner);
                         notesSpinner.setAdapter(stringArrayAdapter);
@@ -504,7 +519,7 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
                     editText_treatment_time.setText(selectedHour + ":" + selectedMinute);
                 }
             }, hour, minute, true);//Yes 24 hour time
-            treatmentTimePicker.setTitle("Select Time");
+            treatmentTimePicker.setTitle(getString(R.string.treatments_select_time));
         }
     }
 
@@ -548,11 +563,11 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
             }
             switch (position) {
                 case 0:
-                    return "Active";
+                    return getString(R.string.treatments_active);
                 case 1:
-                    return "Today";
+                    return getString(R.string.treatments_today);
                 case 2:
-                    return "Yesterday";
+                    return getString(R.string.treatments_yesterday);
             }
             return null;
         }
@@ -587,134 +602,153 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
                 TextView treatmentListValue, treatmentListType;
                 treatmentListType = (TextView) view.findViewById(R.id.treatmentTypeLayout);
                 treatmentListValue = (TextView) view.findViewById(R.id.treatmentAmountLayout);
-                if (treatmentListType.getText().equals("Carbs")){
-                    treatmentListValue.setBackgroundResource(R.drawable.carb_treatment_round);
-                    treatmentListValue.setText(tools.formatDisplayCarbs(Double.valueOf(treatmentListValue.getText().toString())));
-                    treatmentListValue.setTextColor(getResources().getColor( R.color.primary_text));
-                } else {
+                if (treatmentListType.getText().equals(Constants.treatments.CORRECTION) || treatmentListType.getText().equals(Constants.treatments.BOLUS)){
                     treatmentListValue.setBackgroundResource(R.drawable.insulin_treatment_round);
                     treatmentListValue.setText(tools.formatDisplayInsulin(Double.valueOf(treatmentListValue.getText().toString()), 1));
                     treatmentListValue.setTextColor(getResources().getColor(R.color.primary_light));
+                } else {
+                    treatmentListValue.setBackgroundResource(R.drawable.carb_treatment_round);
+                    treatmentListValue.setText(tools.formatDisplayCarbs(Double.valueOf(treatmentListValue.getText().toString())));
+                    treatmentListValue.setTextColor(getResources().getColor( R.color.primary_text));
                 }
 
                 //Shows Integration details, if any
-                ImageView treatmentInsulinIntegrationImage = (ImageView) view.findViewById(R.id.treatmentIntegrationIconLayout);
-                TextView treatmentInsulinIntegrationText = (TextView) view.findViewById(R.id.treatmentIntegrationLayout);
-                switch (treatmentInsulinIntegrationText.getText().toString()) {
-                    case "sent":
-                        treatmentInsulinIntegrationImage.setBackgroundResource(R.drawable.arrow_right_bold_circle);
-                        break;
-                    case "received":
-                        treatmentInsulinIntegrationImage.setBackgroundResource(R.drawable.information);
-                        break;
-                    case "delayed":
-                        treatmentInsulinIntegrationImage.setBackgroundResource(R.drawable.clock);
-                        break;
-                    case "delivered":
-                        treatmentInsulinIntegrationImage.setBackgroundResource(R.drawable.checkbox_marked_circle);
-                        break;
-                    case "error":
-                        treatmentInsulinIntegrationImage.setBackgroundResource(R.drawable.alert_circle);
-                        break;
-                    default:
-                        treatmentInsulinIntegrationImage.setBackgroundResource(0);
-                        break;
-                }
+                ImageView treatmentInsulinIntegrationImage  = (ImageView) view.findViewById(R.id.treatmentIntegrationIconLayout);
+                TextView treatmentInsulinIntegrationText    = (TextView) view.findViewById(R.id.treatmentIntegrationLayout);
+                treatmentInsulinIntegrationImage.setBackgroundResource(tools.getIntegrationStatusImg(treatmentInsulinIntegrationText.getText().toString()));
+
+                return view;
+            }
+        }
+        public class mySimpleAdapterIntegration extends SimpleAdapter {
+
+            public mySimpleAdapterIntegration(Context context, List<HashMap<String, String>> items, int resource, String[] from, int[] to) {
+                super(context, items, resource, from, to);
+            }
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+
+                //Shows Integration details image
+                ImageView integrationImage  = (ImageView) view.findViewById(R.id.integrationIcon);
+                TextView integrationState   = (TextView) view.findViewById(R.id.integrationState);
+                integrationImage.setBackgroundResource(tools.getIntegrationStatusImg(integrationState.getText().toString()));
 
                 return view;
             }
         }
 
         public void loadTreatments(final View rootView){
+            Log.d(TAG, "loadTreatments: START");
+
             treatmentsList          = new ArrayList<>();
-            List<Treatments> treatments;
-            SimpleDateFormat sdfDate = new SimpleDateFormat("dd MMM", getResources().getConfiguration().locale);
+            List<Bolus> boluses;
+            List<Carb> carbs;
             SimpleDateFormat sdfTime = new SimpleDateFormat("HH:mm", getResources().getConfiguration().locale);
             Calendar calDate        = Calendar.getInstance();
-            Calendar treatmentDate  = Calendar.getInstance();
             Calendar calYesterday   = Calendar.getInstance();
             calYesterday.add(Calendar.DAY_OF_YEAR, -1); // yesterday
-            Profile profile = new Profile(new Date());
             Boolean lastCarb=false,lastInsulin=false;
-
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(MainApp.instance());
 
             String toLoad="";
             Bundle bundle = this.getArguments();
             if (bundle != null) {
-                toLoad = bundle.getString("LOAD", "TODAY");
+                toLoad = bundle.getString(Constants.treatments.LOAD, Constants.treatments.TODAY);
             }
 
             switch (toLoad){
-                case "TODAY":
-                    treatments = Treatments.getTreatmentsDated(tools.getStartOfDayInMillis(calDate.getTime()),tools.getEndOfDayInMillis(calDate.getTime()), null);
+                case Constants.treatments.TODAY:
+                    boluses = Bolus.getBolusesBetween(  tools.getStartOfDay(calDate.getTime()), tools.getEndOfDay(calDate.getTime()), realmManager.getRealm());
+                    carbs   = Carb.getCarbsBetween(     tools.getStartOfDay(calDate.getTime()), tools.getEndOfDay(calDate.getTime()), realmManager.getRealm());
                     break;
-                case "YESTERDAY":
-                    treatments = Treatments.getTreatmentsDated(tools.getStartOfDayInMillis(calYesterday.getTime()),tools.getEndOfDayInMillis(calYesterday.getTime()), null);
+                case Constants.treatments.YESTERDAY:
+                    boluses = Bolus.getBolusesBetween(  tools.getStartOfDay(calYesterday.getTime()), tools.getEndOfDay(calYesterday.getTime()), realmManager.getRealm());
+                    carbs   = Carb.getCarbsBetween(     tools.getStartOfDay(calYesterday.getTime()), tools.getEndOfDay(calYesterday.getTime()), realmManager.getRealm());
                     break;
                 default: //all active
-                    treatments = Treatments.getTreatmentsDated(calDate.getTimeInMillis() - (8 * 60 * 60000),calDate.getTimeInMillis(), null); //Grab all for the last 8 hours, we will look later if they are active
+                    //Grab all for the last 8 hours, we will look later if they are active
+                    boluses = Bolus.getBolusesBetween(  new Date(calDate.getTimeInMillis() - (8 * 60 * 60000)), new Date(), realmManager.getRealm());
+                    carbs   = Carb.getCarbsBetween(     new Date(calDate.getTimeInMillis() - (8 * 60 * 60000)), new Date(), realmManager.getRealm());
             }
 
-            for (Treatments treatment : treatments){                                                    //Convert from a List<Object> Array to ArrayList
+            for (Bolus bolus : boluses){
                 HashMap<String, String> treatmentItem = new HashMap<>();
-
-                if (treatment.datetime != null){
-                    treatmentDate.setTime(new Date(treatment.datetime));
+                treatmentItem.put("id",     bolus.getId());
+                treatmentItem.put("time",   sdfTime.format(bolus.getTimestamp()));
+                treatmentItem.put("value",  bolus.getValue().toString());
+                if (bolus.getType().equals(Constants.treatments.BOLUS)){
+                    treatmentItem.put("note",   "");
                 } else {
-                    treatmentDate.setTime(new Date(0));                                                 //Bad Treatment
+                    treatmentItem.put("note",   bolus.getType());
                 }
-                treatmentItem.put("id", treatment.getId().toString());
-                treatmentItem.put("time", sdfTime.format(treatmentDate.getTime()));
-                treatmentItem.put("value", treatment.value.toString());
-                treatmentItem.put("type", treatment.type);
-                treatmentItem.put("note", treatment.note);
+                treatmentItem.put(Constants.treatments.TYPE,   Constants.treatments.BOLUS);
                 treatmentItem.put("active", "");
 
                 //Loads the remaining amount of activity for the treatment, if any
-                if (treatment.type.equals("Insulin")){
-                    if (!lastInsulin) {
-                        String is_active = treatment.isActive(profile);
+                if (!lastInsulin) {
+                    String is_active = bolus.isActive(profile, realmManager.getRealm());
 
-                        if (!is_active.equals("Not Active")) {                                      //Still active Insulin
-                            treatmentItem.put("active", is_active);
-                        } else {                                                                    //Not active
-                            lastInsulin = true;
-                        }
+                    if (!is_active.equals("Not Active")) {                                      //Still active Insulin
+                        treatmentItem.put("active", is_active);
+                    } else {                                                                    //Not active
+                        lastInsulin = true;
                     }
+                }
 
-                    Integration integration = Integration.getIntegration("insulin_integration_app","bolus_delivery",treatment.getId());
-                    treatmentItem.put("integration", integration.state);  //log STATUS of insulin_Integration_App
-
+                Integration integration = Integration.getIntegration(Constants.treatmentService.INSULIN_INTEGRATION_APP,"bolus_delivery",bolus.getId(), realmManager.getRealm());
+                if (integration != null) {
+                    treatmentItem.put("integration", integration.getState());                           //log STATUS of insulin_Integration_App
                 } else {
-                    if (!lastCarb) {
-                        String is_active = treatment.isActive(profile);
-
-                        if (!is_active.equals("Not Active")) {                                      //Still active carbs
-                            treatmentItem.put("active", is_active);
-                        } else {                                                                    //Not active
-                            lastCarb = true;
-                        }
-                    }
                     treatmentItem.put("integration", "");
                 }
 
                 if (toLoad.equals("ACTIVE")){
-                    if (treatment.type.equals("Insulin")){
-                        if (!lastInsulin ) treatmentsList.add(treatmentItem);
-                    } else {
-                        if (!lastCarb) treatmentsList.add(treatmentItem);
-                    }
+                    if (!lastInsulin ) treatmentsList.add(treatmentItem);
                 } else {
                     treatmentsList.add(treatmentItem);
                 }
-
             }
+
+            for (Carb carb : carbs){
+                HashMap<String, String> treatmentItem = new HashMap<>();
+                treatmentItem.put("id",     carb.getId());
+                treatmentItem.put("time",   sdfTime.format(carb.getTimestamp()));
+                treatmentItem.put("value",  carb.getValue().toString());
+                treatmentItem.put("note",   "");
+                treatmentItem.put(Constants.treatments.TYPE,   Constants.treatments.CARBS);
+                treatmentItem.put("active", "");
+
+                if (!lastCarb) {
+                    String is_active = carb.isActive(profile, realmManager.getRealm());
+
+                    if (!is_active.equals("Not Active")) {                                      //Still active carbs
+                        treatmentItem.put("active", is_active);
+                    } else {                                                                    //Not active
+                        lastCarb = true;
+                    }
+                }
+                treatmentItem.put("integration", "");
+
+                if (toLoad.equals("ACTIVE")){
+                    if (!lastCarb) treatmentsList.add(treatmentItem);
+                } else {
+                    treatmentsList.add(treatmentItem);
+                }
+            }
+
+            //sort treatmentsList by date
+            Collections.sort(treatmentsList, new Comparator<HashMap< String,String >>() {
+                @Override
+                public int compare(HashMap<String, String> lhs,
+                                   HashMap<String, String> rhs) {
+                    return rhs.get("time").compareTo(lhs.get("time"));
+                }
+            });
 
             list = (ListView) rootView.findViewById(R.id.treatmentList);
             adapter = new mySimpleAdapter(rootView.getContext(), treatmentsList, R.layout.treatments_list_layout,
-                    new String[]{"id", "time", "value", "type", "note", "active", "integration"},
-                    new int[]{R.id.treatmentID, R.id.treatmentTimeLayout, R.id.treatmentAmountLayout, R.id.treatmentTypeLayout, R.id.treatmentNoteLayout, R.id.treatmentActiveLayout, R.id.treatmentIntegrationLayout});
+                    new String[]{"id", "time", "value", Constants.treatments.TYPE, "note", "active", "integration"},
+                    new int[]{R.id.treatmentID, R.id.treatmentTimeLayout, R.id.treatmentAmountLayout, R.id.treatmentTypeLayout, R.id.treatmentNoteLayout,  R.id.treatmentActiveLayout, R.id.treatmentIntegrationLayout});
             list.setAdapter(adapter);
 
             list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
@@ -723,12 +757,13 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
                     //TextView textview = (TextView) view.findViewById(R.id.treatmentID);
                     //String info = textview.getText().toString();
 
-                    Toast.makeText(rootView.getContext(), "Long press for options", Toast.LENGTH_LONG).show();
+                    Toast.makeText(rootView.getContext(), getString(R.string.treatments_press_options), Toast.LENGTH_LONG).show();
                 }
             });
             registerForContextMenu(list);   //Register popup menu when clicking a ListView item
 
-            Log.d("DEBUG", "loadTreatments: " + treatments.size());
+            Log.d("DEBUG", "loadTreatments: " + treatmentsList.size());
+            Log.d(TAG, "loadTreatments: FINISH");
         }
 
         @Override
@@ -739,10 +774,16 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
             // We know that each row in the adapter is a Map
             HashMap map =  (HashMap) adapter.getItem(aInfo.position);
 
-            selectedListItemDB_ID   = Long.parseLong(map.get("id").toString());
+            selectedListItemDB_ID   = map.get("id").toString();
             selectedListItemID      = (HashMap) adapter.getItem(aInfo.position);
+            if (map.get(Constants.treatments.TYPE).equals(Constants.treatments.CORRECTION) || map.get(Constants.treatments.TYPE).equals(Constants.treatments.BOLUS)){
+                selectedListType = Constants.treatments.BOLUS;
+                menu.setHeaderTitle(tools.formatDisplayInsulin(Double.parseDouble(map.get("value").toString()),2) + " " + map.get(Constants.treatments.TYPE));
+            } else {
+                selectedListType = Constants.treatments.CARBS;
+                menu.setHeaderTitle(tools.formatDisplayCarbs(Double.parseDouble(map.get("value").toString())) + " " + map.get(Constants.treatments.TYPE));
+            }
 
-            menu.setHeaderTitle(map.get("value") + " " + map.get("type"));
             menu.add(1, 1, 1, "Edit");
             menu.add(1, 2, 2, "Delete");
             menu.add(1, 3, 3, "Integration Details");
@@ -751,48 +792,81 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
         @Override
         public boolean onContextItemSelected(MenuItem item) {
             if (getUserVisibleHint()) {                                                             //be sure we only action for the current Fragment http://stackoverflow.com/questions/5297842/how-to-handle-oncontextitemselected-in-a-multi-fragment-activity
-                int itemId = item.getItemId();
-                Treatments treatment = Treatments.getTreatmentByID(selectedListItemDB_ID);
+                int itemId  = item.getItemId();
+                Bolus bolus = new Bolus();
+                Carb carb   = new Carb();
+                List<Integration> integrations;
 
-                if (treatment != null) {
+                if (selectedListType.equals(Constants.treatments.BOLUS)) {
+                    bolus = Bolus.getBolus(selectedListItemDB_ID, realmManager.getRealm());
+                } else {
+                    carb = Carb.getCarb(selectedListItemDB_ID, realmManager.getRealm());
+                }
+
+                if (selectedListType != null) {
 
                     switch (itemId) {
                         case 1: //Edit - loads the treatment to be edited and delete the original
-                            spinner_treatment_type.setSelection(getIndex(spinner_treatment_type, treatment.type));
-                            spinner_notes.setSelection(getIndex(spinner_notes, treatment.note));
-                            Date treatmentDate = new Date(treatment.datetime);
-                            SimpleDateFormat sdfDate = new SimpleDateFormat("dd-MM-yyyy", getResources().getConfiguration().locale);
+                            Date treatmentDate = new Date();
+                            realmManager.getRealm().beginTransaction();
+                            if (selectedListType.equals(Constants.treatments.BOLUS)) {
+                                treatmentDate = bolus.getTimestamp();
+                                editText_treatment_value.setText(bolus.getValue().toString());
+                                spinner_notes.setSelection(getIndex(spinner_notes, Constants.treatments.INSULIN));
+                                spinner_treatment_type.setSelection(getIndex(spinner_treatment_type, bolus.getType()));
+                                bolus.deleteFromRealm();
+                            } else {
+                                treatmentDate = carb.getTimestamp();
+                                editText_treatment_value.setText(carb.getValue().toString());
+                                spinner_notes.setSelection(getIndex(spinner_notes, Constants.treatments.CARBS));
+                                spinner_treatment_type.setSelection(getIndex(spinner_treatment_type, ""));
+                                carb.deleteFromRealm();
+                            }
+                            realmManager.getRealm().commitTransaction();
+                            final SimpleDateFormat sdfDate = new SimpleDateFormat("dd-MM-yyyy", getResources().getConfiguration().locale);
                             SimpleDateFormat sdfTime = new SimpleDateFormat("HH:mm", getResources().getConfiguration().locale);
                             editText_treatment_date.setText(sdfDate.format(treatmentDate));
                             editText_treatment_time.setText(sdfTime.format(treatmentDate));
-                            editText_treatment_value.setText(treatment.value.toString());
 
-                            treatment.delete();
                             treatmentsList.remove(selectedListItemID);
                             adapter.notifyDataSetChanged();
                             adapter.notifyDataSetInvalidated();
                             listDirty = true;
                             eViewPager.setCurrentItem(1); //load edit treatment fragment
                             //loadTreatments(parentsView);
-                            Toast.makeText(parentsView.getContext(), "Original Treatment Deleted, re-save to add back", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(parentsView.getContext(), getString(R.string.treatments_original_deleted), Toast.LENGTH_SHORT).show();
                             break;
                         case 2: //Delete
-                            treatment.delete();
+                            realmManager.getRealm().beginTransaction();
+                            if (selectedListType.equals(Constants.treatments.BOLUS)) {
+                                integrations = Integration.getIntegrationsFor(Constants.treatments.BOLUS,bolus.getId(),realmManager.getRealm());
+                                bolus.deleteFromRealm();
+                            } else {
+                                integrations = Integration.getIntegrationsFor("carb",carb.getId(),realmManager.getRealm());
+                                carb.deleteFromRealm();
+                            }
+                            //Update any integrations for this object
+                            for (Integration integration : integrations){
+                                integration.setState("deleted");
+                                integration.setDetails(integration.getDetails() + " TREATMENT DELETED");
+                            }
+                            realmManager.getRealm().commitTransaction();
                             treatmentsList.remove(selectedListItemID);
                             adapter.notifyDataSetChanged();
                             adapter.notifyDataSetInvalidated();
                             listDirty = true;
                             //loadTreatments(parentsView);
-                            Toast.makeText(parentsView.getContext(), "Treatment Deleted", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(parentsView.getContext(), getString(R.string.treatments_deleted), Toast.LENGTH_SHORT).show();
                             break;
                         case 3: //Integration Details
-                            String intergrationType;
-                            if (treatment.type.equals("Insulin")){
-                                intergrationType="bolus_delivery";
+                            String integrationType;
+                            if (selectedListType.equals(Constants.treatments.BOLUS)) {
+                                integrationType="bolus_delivery";
+                                integrations = Integration.getIntegrationsFor(integrationType,bolus.getId(), realmManager.getRealm());
                             } else {
-                                intergrationType="carbs";
+                                integrationType=Constants.treatments.CARBS;
+                                integrations = Integration.getIntegrationsFor(integrationType,carb.getId(), realmManager.getRealm());
                             }
-                            List<Integration> integrations = Integration.getIntegrationsFor(intergrationType,treatment.getId());
 
                             final Dialog dialog = new Dialog(parentsView.getContext());
                             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -802,34 +876,67 @@ public class EnterTreatment extends android.support.v4.app.FragmentActivity {
 
                             ListView integrationListView        = (ListView) dialog.findViewById(R.id.integrationList);
                             ArrayList<HashMap<String, String>> integrationList = new ArrayList<>();
-                            Calendar integrationDate  = Calendar.getInstance();
                             SimpleDateFormat sdfDateTime = new SimpleDateFormat("dd MMM HH:mm", getResources().getConfiguration().locale);
 
                             for (Integration integration : integrations){                                                    //Convert from a List<Object> Array to ArrayList
                                 HashMap<String, String> integrationItem = new HashMap<>();
 
-                                ObjectToSync objectSyncDetails = new ObjectToSync(integration);
-
-                                if (objectSyncDetails.requested != null){
-                                    integrationDate.setTime(objectSyncDetails.requested);
-                                } else {
-                                    integrationDate.setTime(new Date(0));                                                 //Bad integration
-                                }
-                                integrationItem.put("integrationType",      integration.type);
-                                integrationItem.put("integrationWhat",      "Request sent: " + objectSyncDetails.getObjectSummary());
-                                integrationItem.put("integrationDateTime",  sdfDateTime.format(integrationDate.getTime()));
-                                integrationItem.put("integrationState",     "State: " + objectSyncDetails.state);
-                                integrationItem.put("integrationAction",    "Action: " + objectSyncDetails.action);
-                                integrationItem.put("integrationRemoteID",  "RemoteID: " + objectSyncDetails.remote_id.toString());
-                                integrationItem.put("integrationDetails",   objectSyncDetails.details);
+                                integrationItem.put("integrationID",        integration.getId());
+                                integrationItem.put("integrationType",      integration.getType());
+                                integrationItem.put("integrationDateTime",  sdfDateTime.format(integration.getTimestamp()));
+                                integrationItem.put("integrationDetails",   integration.getDetails());
+                                integrationItem.put("integrationState",     integration.getState());
 
                                 integrationList.add(integrationItem);
                             }
 
-                            SimpleAdapter adapter = new SimpleAdapter(MainActivity.getInstace(), integrationList, R.layout.integration_list_layout,
-                                    new String[]{"integrationType", "integrationWhat", "integrationDateTime", "integrationState", "integrationAction", "integrationRemoteID", "integrationDetails"},
-                                    new int[]{R.id.integrationType, R.id.integrationWhat, R.id.integrationDateTime, R.id.integrationState, R.id.integrationAction, R.id.integrationRemoteID, R.id.integrationDetails});
+                            mySimpleAdapterIntegration adapter = new mySimpleAdapterIntegration(MainActivity.getInstance(), integrationList, R.layout.integration_list_layout,
+                                    new String[]{"integrationID", "integrationType", "integrationDateTime", "integrationDetails", "integrationState"},
+                                    new int[]{R.id.integrationID, R.id.integrationType, R.id.integrationDateTime, R.id.integrationDetails, R.id.integrationState});
                             integrationListView.setAdapter(adapter);
+
+                            integrationListView.setOnItemClickListener(new AdapterView.OnItemClickListener(){
+                                @Override
+                                public void onItemClick(AdapterView<?> parent, View view, int position, long rowId) {
+                                    Dialog dialog = new Dialog(parentsView.getContext());
+                                    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+                                    dialog.setContentView(R.layout.integration_list_layout_details);
+                                    dialog.setCancelable(true);
+                                    dialog.setCanceledOnTouchOutside(true);
+
+                                    SimpleDateFormat sdfDateTime = new SimpleDateFormat("dd MMM HH:mm", getResources().getConfiguration().locale);
+                                    TextView integrationID  = (TextView) view.findViewById(R.id.integrationID);
+                                    Integration integration = Integration.getIntegrationByID(integrationID.getText().toString(), realmManager.getRealm());
+
+                                    TextView integrationTypeDetails         = (TextView) dialog.findViewById(R.id.integrationTypeDetails);
+                                    TextView integrationCreatedDetails      = (TextView) dialog.findViewById(R.id.integrationCreatedDetails);
+                                    TextView integrationUpdatedDetails      = (TextView) dialog.findViewById(R.id.integrationUpdatedDetails);
+                                    TextView integrationStateDetails        = (TextView) dialog.findViewById(R.id.integrationStateDetails);
+                                    TextView integrationActionDetails       = (TextView) dialog.findViewById(R.id.integrationActionDetails);
+                                    TextView integrationWhatDetails         = (TextView) dialog.findViewById(R.id.integrationWhatDetails);
+                                    TextView integrationIDDetails           = (TextView) dialog.findViewById(R.id.integrationIDDetails);
+                                    TextView integrationRemoteIDDetails     = (TextView) dialog.findViewById(R.id.integrationRemoteIDDetails);
+                                    TextView integrationDetailsDetails      = (TextView) dialog.findViewById(R.id.integrationDetailsDetails);
+                                    TextView integrationToSyncDetails       = (TextView) dialog.findViewById(R.id.integrationToSyncDetails);
+                                    TextView integrationAuthIDDetails       = (TextView) dialog.findViewById(R.id.integrationAuthIDDetails);
+                                    TextView integrationRemoteVar1Details   = (TextView) dialog.findViewById(R.id.integrationRemoteVar1Details);
+                                    integrationTypeDetails.setText      (integration.getType());
+                                    integrationCreatedDetails.setText   ("Created:  " + sdfDateTime.format(integration.getTimestamp()));
+                                    integrationUpdatedDetails.setText   ("Updated:  " + sdfDateTime.format(integration.getDate_updated()));
+                                    integrationStateDetails.setText     ("State:    " + integration.getState());
+                                    integrationActionDetails.setText    ("Action:   " + integration.getAction());
+                                    integrationWhatDetails.setText      (integration.getObjectSummary(realmManager.getRealm()));
+                                    integrationIDDetails.setText        ("Local ID: " + integration.getId());
+                                    integrationRemoteIDDetails.setText  ("Remote ID:" + integration.getRemote_id());
+                                    integrationDetailsDetails.setText   (integration.getDetails());
+                                    integrationToSyncDetails.setText    ("To Sync:  " + integration.getToSync());
+                                    integrationAuthIDDetails.setText    ("Auth ID:  " + integration.getAuth_code());
+                                    integrationRemoteVar1Details.setText("Remote Var1: " + integration.getRemote_var1());
+
+                                    dialog.show();
+                                }
+
+                            });
 
                             dialog.show();
                             break;

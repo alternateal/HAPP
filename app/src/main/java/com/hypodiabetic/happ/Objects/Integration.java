@@ -1,17 +1,15 @@
 package com.hypodiabetic.happ.Objects;
 
-import android.provider.BaseColumns;
-
-import com.activeandroid.Model;
-import com.activeandroid.annotation.Column;
-import com.activeandroid.annotation.Table;
-import com.activeandroid.query.Select;
-import com.google.gson.annotations.Expose;
-
-import org.json.JSONObject;
+import com.hypodiabetic.happ.tools;
 
 import java.util.Date;
 import java.util.List;
+import java.util.UUID;
+
+import io.realm.Realm;
+import io.realm.RealmObject;
+import io.realm.RealmResults;
+import io.realm.Sort;
 
 /**
  * Created by Tim on 16/01/2016.
@@ -19,148 +17,216 @@ import java.util.List;
  * one object may have multiple Integrations
  */
 
-@Table(name = "integration", id = BaseColumns._ID)
-public class Integration extends Model {
+public class Integration extends RealmObject {
 
-    @Expose
-    @Column(name = "type")
-    public String type;                         //What Integration is this?
-    @Expose
-    @Column(name = "state")
-    public String state;                        //Current state this Integration is in
-    @Expose
-    @Column(name = "action_to_perform")
-    public String action;                       //Requested action for this object
-    @Expose
-    @Column(name = "date_created")
-    public Long date_created;                   //Date created
-    @Expose
-    @Column(name = "date_updated")
-    public Long date_updated;                   //Last time the Integration for this object was updated
-    @Expose
-    @Column(name = "happ_object")
-    public String happ_object;                  //What happ object is this?
-    @Expose
-    @Column(name = "happ_object_id")
-    public Long happ_object_id;                 //HAPP ID for this object
-    @Expose
-    @Column(name = "remote_id")
-    public Long remote_id;                      //ID provided by the remote system
-    @Expose
-    @Column(name = "remote_details")
-    public String details;                      //The details of this Integration attempt
-    @Expose
-    @Column(name = "remote_var1")
-    public String remote_var1;                  //Misc information about this Integration
-    @Expose
-    @Column(name = "auth_code")
-    public String auth_code;                    //auth_code if required
+    public String getId() {
+        return id;
+    }
+    public String getType() {
+        return type;
+    }
+    public void setType(String type) {
+        this.type = type;
+    }
+    public String getState() {
+        return state;
+    }
+    public void setState(String state) {
+        this.state = state;
+    }
+    public String getAction() {
+        return action;
+    }
+    public void setAction(String action) {
+        this.action = action;
+    }
+    public Date getTimestamp() {
+        return timestamp;
+    }
+    public Date getDate_updated() {
+        return date_updated;
+    }
+    public void setDate_updated(Date date_updated) {
+        this.date_updated = date_updated;
+    }
+    public String getLocal_object() {
+        return local_object;
+    }
+    public void setLocal_object(String local_object) {
+        this.local_object = local_object;
+    }
+    public String getLocal_object_id() {
+        return local_object_id;
+    }
+    public void setLocal_object_id(String local_object_id) {
+        this.local_object_id = local_object_id;
+    }
+    public String getRemote_id() {
+        return remote_id;
+    }
+    public void setRemote_id(String remote_id) {
+        this.remote_id = remote_id;
+    }
+    public String getDetails() {
+        return details;
+    }
+    public void setDetails(String details) {
+        this.details = details;
+    }
+    public String getRemote_var1() {
+        return remote_var1;
+    }
+    public void setRemote_var1(String remote_var1) {
+        this.remote_var1 = remote_var1;
+    }
+    public String getAuth_code() {
+        return auth_code;
+    }
+    public void setAuth_code(String auth_code) {
+        this.auth_code = auth_code;
+    }
+    public Boolean getToSync() {
+        return toSync;
+    }
+    public void setToSync(Boolean toSync) {
+        this.toSync = toSync;
+    }
+
+    private String id;
+    private String type;                        //What Integration is this?
+    private String state;                       //Current state this Integration is in
+    private String action;                      //Requested action for this object
+    private Date timestamp;                     //Date created
+    private Date date_updated;                  //Last time the Integration for this object was updated
+    private String local_object;                //What happ object is this? Carb, Bolus, etc
+    private String local_object_id;             //HAPP ID for this object
+    private String remote_id;                   //ID provided by the remote system
+    private String details;                     //The details of this Integration attempt
+    private String remote_var1;                 //Misc information about this Integration
+    private String auth_code;                   //auth_code if required
+    private Boolean toSync;                     //Do we need to sync this object?
 
     public Integration(){
-        date_created = new Date().getTime();
-        date_updated = new Date().getTime();
-        remote_var1 =   "";
-        state       =   "";
+        id                  = UUID.randomUUID().toString();
+        timestamp           = new Date();
+        date_updated        = new Date();
+        remote_var1         =   "";
+        state               =   "";
+        toSync              = true;
     }
 
-    public static Integration getIntegration(String type, String happ_object, Long happ_id){
-        Integration integration = new Select()
-                .from(Integration.class)
-                .where("type = '" + type + "'")
-                .where("happ_object = '" + happ_object + "'")
-                .where("happ_object_id = " + happ_id)
-                .executeSingle();
+    public Integration(String type, String local_object, String happ_id){
+        id                  = UUID.randomUUID().toString();
+        timestamp           = new Date();
+        date_updated        = new Date();
+        remote_var1         =   "";
+        state               =   "";
+        toSync              = true;
+        this.type           =   type;
+        this.local_object    =   local_object;
+        this.local_object_id =   happ_id;
+    }
 
-        if (integration == null) {                                                                  //We dont have an Integration for this item, return a new one
-            Integration newIntegration = new Integration();
-            newIntegration.type             = type;
-            newIntegration.happ_object      = happ_object;
-            newIntegration.happ_object_id   = happ_id;
-            return newIntegration;
+    public static Integration getIntegration(String type, String local_object, String happ_id, Realm realm){
+        RealmResults<Integration> results = realm.where(Integration.class)
+                .equalTo("type", type)
+                .equalTo("local_object", local_object)
+                .equalTo("local_object_id", happ_id)
+                .findAllSorted("date_updated", Sort.DESCENDING);
+
+        if (results.isEmpty()) {                                                                    //We dont have an Integration for this item
+            return null;
 
         } else {                                                                                    //Found an Integration, return it
-            return integration;
+            return results.first();
         }
     }
 
-    public static List<Integration> getIntegrationsFor(String happ_object, Long happ_object_id) {
-        return new Select()
-                .from(Integration.class)
-                .where("happ_object = '" + happ_object + "'")
-                .where("happ_object_id = " + happ_object_id)
-                .orderBy("date_updated desc")
-                .execute();
+    public static List<Integration> getIntegrationsFor(String local_object, String local_object_id, Realm realm) {
+        RealmResults<Integration> results = realm.where(Integration.class)
+                .equalTo("local_object", local_object)
+                .equalTo("local_object_id", local_object_id)
+                .findAllSorted("date_updated", Sort.DESCENDING);
+        return results;
     }
 
-    public static List<Integration> getIntegrations(String type, String happ_object,  int limit) {
-        return new Select()
-                .from(Integration.class)
-                .where("happ_object = '" + happ_object + "'")
-                .where("type = '" + type + "'")
-                .limit(limit)
-                .orderBy("date_updated desc")
-                .execute();
+    public static List<Integration> getIntegrationsHoursOld(String type, String local_object,  int inLastHours, Realm realm) {
+        Date now        = new Date();
+        Date hoursAgo   = new Date(now.getTime() - (inLastHours * 60 * 60 * 1000));
+
+        RealmResults<Integration> results = realm.where(Integration.class)
+                .equalTo("local_object", local_object)
+                .equalTo("type", type)
+                .greaterThanOrEqualTo("date_updated", hoursAgo)
+                .lessThanOrEqualTo("date_updated", now)
+                .findAllSorted("date_updated", Sort.DESCENDING);
+        return results;
     }
 
-    public static List<Integration> getIntegrationsHoursOld(String type, String happ_object,  int inLastHours) {
-
-        Long now = new Date().getTime();
-        Long hoursAgo = new Date().getTime() - (inLastHours * 60 * 60 * 1000);
-        return new Select()
-                .from(Integration.class)
-                .where("happ_object = '" + happ_object + "'")
-                .where("type = '" + type + "'")
-                .where("date_updated >= ? and date_updated <= ?", hoursAgo, now)
-                .orderBy("date_updated desc")
-                .execute();
-    }
-
-    public static List<Integration> getIntegrationsToSync(String type, String happ_object) {
-        if (happ_object != null) {
-            return new Select()
-                    .from(Integration.class)
-                    .where("type = '" + type + "'")
-                    .where("happ_object = '" + happ_object + "'")
-                    .where("state = 'to_sync'")
-                    .orderBy("date_updated desc")
-                    .execute();
+    public static List<Integration> getIntegrationsToSync(String type, String local_object, Realm realm) {
+        if (local_object != null) {
+            RealmResults<Integration> results = realm.where(Integration.class)
+                    .equalTo("local_object", local_object)
+                    .equalTo("type", type)
+                    .equalTo("toSync", Boolean.TRUE)
+                    .findAllSorted("date_updated", Sort.DESCENDING);
+            return results;
         } else {
-            return new Select()
-                    .from(Integration.class)
-                    .where("type = '" + type + "'")
-                    .where("state = 'to_sync'")
-                    .orderBy("date_updated desc")
-                    .execute();
+            RealmResults<Integration> results = realm.where(Integration.class)
+                    .equalTo("type", type)
+                    .equalTo("toSync", Boolean.TRUE)
+                    .findAllSorted("date_updated", Sort.DESCENDING);
+            return results;
         }
     }
 
-    public static Integration getIntegrationByID(Long dbid) {
-        Integration integration = new Select()
-                .from(Integration.class)
-                .where("_id = " + dbid)
-                .executeSingle();
-        return integration;
+    public static Integration getIntegrationByID(String uuid, Realm realm) {
+        RealmResults<Integration> results = realm.where(Integration.class)
+                .equalTo("id", uuid)
+                .findAllSorted("timestamp", Sort.DESCENDING);
+        if (results.isEmpty()) {
+            return null;
+        } else {
+            return results.first();
+        }
     }
 
-    public static List<Integration> getUpdatedInLastMins(Integer inLastMins, String type) {
+    public static List<Integration> getUpdatedInLastMins(Integer inLastMins, String type, Realm realm) {
+        Date now = new Date();
+        Date minsAgo = new Date(now.getTime() - (inLastMins * 60 * 1000));
 
-        Long now = new Date().getTime();
-        Long minsAgo = new Date().getTime() - (inLastMins * 60 * 1000);
-        return new Select()
-                .from(Integration.class)
-                .where("type = '" + type + "'")
-                .where("date_updated >= ? and date_updated <= ?", minsAgo, now)
-                .orderBy("date_updated desc")
-                .execute();
+        RealmResults<Integration> results = realm.where(Integration.class)
+                .equalTo("type", type)
+                .greaterThanOrEqualTo("date_updated", minsAgo)
+                .lessThanOrEqualTo("date_updated", now)
+                .findAllSorted("date_updated", Sort.DESCENDING);
+        return results;
     }
 
-    public static List<Integration> getIntegrationsWithErrors(String type) {
-        return new Select()
-                .from(Integration.class)
-                .where("type = '" + type + "'")
-                .where("state = 'error'")
-                .orderBy("date_updated desc")
-                .execute();
+    public static List<Integration> getIntegrationsWithErrors(String type, Realm realm) {
+        RealmResults<Integration> results = realm.where(Integration.class)
+                .equalTo("type", type)
+                .equalTo("state", "error")
+                .findAllSorted("date_updated", Sort.DESCENDING);
+        return results;
+    }
+
+    public String getObjectSummary(Realm realm){
+        switch (local_object){
+            case "bolus_delivery":
+                Bolus bolus = Bolus.getBolus(local_object_id, realm);
+                return tools.formatDisplayInsulin(bolus.getValue(),2) + " " + bolus.getType();
+            case "temp_basal":
+                TempBasal tempBasal = TempBasal.getTempBasalByID(local_object_id, realm);
+                Pump pump = new Pump(new Profile(new Date()), realm);
+                pump.setNewTempBasal(null, tempBasal);
+                return tools.formatDisplayInsulin(tempBasal.getRate(),2) + " (" + pump.getTempBasalPercent() + "%) " + tempBasal.getDuration() + "m duration";
+            case "treatment_carbs":
+                Carb carb = Carb.getCarb(local_object_id, realm);
+                return tools.formatDisplayCarbs(carb.getValue());
+            default:
+                return "";
+        }
     }
 
 }
